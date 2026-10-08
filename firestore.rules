@@ -1,0 +1,231 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function hasProfile(uid) {
+      return exists(/databases/$(database)/documents/users/$(uid));
+    }
+
+    function profile(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data;
+    }
+
+    function hasActiveLandlordRecord(uid) {
+      return exists(/databases/$(database)/documents/landlords/$(uid)) &&
+        get(/databases/$(database)/documents/landlords/$(uid))
+          .data.get('status', '') == 'active';
+    }
+
+    function hasPendingLandlordRecord(uid) {
+      return exists(/databases/$(database)/documents/landlords/$(uid)) &&
+        get(/databases/$(database)/documents/landlords/$(uid))
+          .data.get('status', '') == 'pending';
+    }
+
+    function hasActiveAdminProfile(uid) {
+      return exists(/databases/$(database)/documents/adminProfiles/$(uid)) &&
+        get(/databases/$(database)/documents/adminProfiles/$(uid))
+          .data.get('status', '') == 'active';
+    }
+
+    function isSuperAdmin() {
+      return signedIn() && (
+        request.auth.token.get('role', '') == 'super_admin' ||
+        hasActiveAdminProfile(request.auth.uid)
+      );
+    }
+
+    function isActiveLandlord() {
+      return signedIn() &&
+        hasActiveLandlordRecord(request.auth.uid) &&
+        (!hasProfile(request.auth.uid) ||
+          (profile(request.auth.uid).get('role', '') == 'landlord' &&
+            profile(request.auth.uid).get('isApproved', true) == true));
+    }
+
+    function isTenant() {
+      return signedIn() &&
+        hasProfile(request.auth.uid) &&
+        profile(request.auth.uid).get('role', '') == 'tenant' &&
+        profile(request.auth.uid).get('tenantId', '') is string &&
+        profile(request.auth.uid).get('tenantId', '') != '';
+    }
+
+    function linkedTenantId() {
+      return profile(request.auth.uid).get('tenantId', '');
+    }
+
+    function hasLandlordOwner(data) {
+      return (data.keys().hasAny(['landlordId']) ||
+          data.keys().hasAny(['landlord_id'])) &&
+        (!data.keys().hasAny(['landlordId']) ||
+          data.get('landlordId', '') == request.auth.uid) &&
+        (!data.keys().hasAny(['landlord_id']) ||
+          data.get('landlord_id', '') == request.auth.uid);
+    }
+
+    function ownsNewRecord() {
+      return hasLandlordOwner(request.resource.data);
+    }
+
+    function ownsExistingRecord() {
+      return hasLandlordOwner(resource.data) &&
+        hasLandlordOwner(request.resource.data);
+    }
+
+    function isOperationalCollection(collection) {
+      return collection in [
+        'units', 'tenants', 'payments', 'maintenanceTickets',
+        'announcements', 'notifications', 'expenses', 'tenantDocuments',
+        'settings', 'utilityRateLogs', 'events'
+      ];
+    }
+
+    function canTenantRead(collection, documentId) {
+      return isTenant() && (
+        (collection == 'tenants' && documentId == linkedTenantId()) ||
+        (collection in [
+          'units', 'payments', 'maintenanceTickets', 'tenantDocuments'
+        ] && resource.data.get('tenantId', '') == linkedTenantId()) ||
+        collection in ['announcements', 'settings']
+      );
+    }
+
+    function ownsLinkedUnit(unitId) {
+      return isTenant() &&
+        unitId is string &&
+        exists(/databases/$(database)/documents/tenants/$(linkedTenantId())) &&
+        get(/databases/$(database)/documents/tenants/$(linkedTenantId()))
+          .data.get('unitId', '') == unitId &&
+        exists(/databases/$(database)/documents/units/$(unitId)) &&
+        get(/databases/$(database)/documents/units/$(unitId))
+          .data.get('tenantId', '') == linkedTenantId();
+    }
+
+    match /users/{uid} {
+      allow read: if isSuperAdmin() ||
+        (signedIn() && request.auth.uid == uid);
+      allow create: if isSuperAdmin() ||
+        (signedIn() &&
+          request.auth.uid == uid &&
+          request.resource.data.get('role', '') == 'landlord' &&
+          request.resource.data.get('landlordId', '') == uid &&
+          request.resource.data.get('tenantId', null) == null &&
+          ((hasPendingLandlordRecord(uid) &&
+              request.resource.data.get('isApproved', true) == false) ||
+            (hasActiveLandlordRecord(uid) &&
+              request.resource.data.get('isApproved', true) == true)));
+      allow update: if isSuperAdmin() ||
+        (signedIn() &&
+          request.auth.uid == uid &&
+          request.resource.data.get('role', '') ==
+            resource.data.get('role', '') &&
+          request.resource.data.get('isApproved', true) ==
+            resource.data.get('isApproved', true) &&
+          request.resource.data.get('landlordId', null) ==
+            resource.data.get('landlordId', null) &&
+          request.resource.data.get('tenantId', null) ==
+            resource.data.get('tenantId', null));
+      allow delete: if isSuperAdmin();
+    }
+
+    match /landlords/{uid} {
+      allow read: if isSuperAdmin() ||
+        (signedIn() && request.auth.uid == uid);
+      allow create: if signedIn() &&
+        request.auth.uid == uid &&
+        request.resource.data.get('status', 'pending') == 'pending';
+      allow update, delete: if isSuperAdmin();
+    }
+
+    match /adminProfiles/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    match /adminAuditLogs/{logId} {
+      allow read: if isSuperAdmin();
+      allow write: if false;
+    }
+
+    match /audit_logs/{logId} {
+      allow read: if isSuperAdmin() ||
+        (isActiveLandlord() && hasLandlordOwner(resource.data));
+      allow create: if isActiveLandlord() && ownsNewRecord();
+      allow update: if isActiveLandlord() &&
+        ownsExistingRecord() &&
+        request.resource.data == resource.data;
+      allow delete: if false;
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isSuperAdmin() ||
+        (isActiveLandlord() && hasLandlordOwner(resource.data));
+      allow create: if isSuperAdmin() ||
+        (isActiveLandlord() && ownsNewRecord());
+      allow update: if isSuperAdmin() ||
+        (isActiveLandlord() && ownsExistingRecord());
+      allow delete: if isSuperAdmin() ||
+        (isActiveLandlord() && hasLandlordOwner(resource.data));
+    }
+
+    match /payments/{paymentId} {
+      allow create: if isSuperAdmin() ||
+        (isActiveLandlord() && ownsNewRecord()) ||
+        (isTenant() &&
+          request.resource.data.get('tenantId', '') == linkedTenantId() &&
+          ownsLinkedUnit(request.resource.data.get('unitId', '')) &&
+          request.resource.data.get('status', '') == 'Pending');
+    }
+
+    match /maintenanceTickets/{ticketId} {
+      allow create: if isSuperAdmin() ||
+        (isActiveLandlord() && ownsNewRecord()) ||
+        (isTenant() &&
+          request.resource.data.get('tenantId', '') == linkedTenantId() &&
+          ownsLinkedUnit(request.resource.data.get('unitId', '')) &&
+          request.resource.data.get('status', '') == 'Pending' &&
+          request.resource.data.get('rating', 0) == 0 &&
+          request.resource.data.get('estimatedCost', 0) == 0 &&
+          request.resource.data.get('actualCost', 0) == 0 &&
+          request.resource.data.get('vendorCost', 0) == 0 &&
+          request.resource.data.get('paymentRequired', false) == false);
+      allow update: if isTenant() &&
+        resource.data.get('tenantId', '') == linkedTenantId() &&
+        resource.data.get('status', '') in ['Completed', 'Resolved', 'Closed'] &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['rating', 'ratingFeedback']) &&
+        request.resource.data.get('rating', 0) is int &&
+        request.resource.data.get('rating', 0) >= 1 &&
+        request.resource.data.get('rating', 0) <= 5;
+    }
+
+    match /{collection}/{documentId} {
+      allow read: if isOperationalCollection(collection) &&
+        (isSuperAdmin() ||
+          (isActiveLandlord() && hasLandlordOwner(resource.data)) ||
+          canTenantRead(collection, documentId));
+      allow create: if isOperationalCollection(collection) &&
+        (isSuperAdmin() ||
+          (isActiveLandlord() && ownsNewRecord()));
+      allow update: if isOperationalCollection(collection) &&
+        (isSuperAdmin() ||
+          (isActiveLandlord() && ownsExistingRecord()));
+      allow delete: if isOperationalCollection(collection) &&
+        (isSuperAdmin() ||
+          (isActiveLandlord() && hasLandlordOwner(resource.data)));
+
+      match /liveLocation/{locationId} {
+        allow read, write: if isSuperAdmin() ||
+          (isActiveLandlord() &&
+            hasLandlordOwner(
+              get(/databases/$(database)/documents/$(collection)/$(documentId))
+                .data
+            ));
+      }
+    }
+  }
+}
