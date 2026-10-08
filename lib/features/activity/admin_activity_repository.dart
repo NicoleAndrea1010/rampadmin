@@ -27,14 +27,12 @@ class FirestoreAdminActivityRepository implements AdminActivityRepository {
         actorId: data['actorId'] as String? ?? '',
         actorEmail: data['actorEmail'] as String? ?? '',
         action: data['action'] as String? ?? '',
-        targetType: data['targetType'] as String? ?? '',
         targetId: data['targetId'] as String? ?? '',
         description: data['description'] as String? ?? '',
         reason: data['reason'] as String?,
         timestamp:
             (data['timestamp'] as Timestamp?)?.toDate() ??
             DateTime.fromMillisecondsSinceEpoch(0),
-        timestampAvailable: data['timestamp'] is Timestamp,
       );
     }).toList();
   }
@@ -48,11 +46,6 @@ class FirestoreAdminActivityRepository implements AdminActivityRepository {
 }
 
 class MockAdminActivityRepository implements AdminActivityRepository {
-  // TODO: Align admin operational source with canonical RAMP backend.
-  MockAdminActivityRepository([List<AdminAuditLog>? initialItems])
-    : _items = List.from(initialItems ?? const []);
-
-  final List<AdminAuditLog> _items;
 
   @override
   Future<List<AdminAuditLog>> getActivities() async {

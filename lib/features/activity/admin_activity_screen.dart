@@ -15,17 +15,10 @@ class AdminActivityScreen extends ConsumerStatefulWidget {
       _AdminActivityScreenState();
 }
 
-String _actor(AdminAuditLog log) => log.actorEmail.isNotEmpty
-    ? log.actorEmail
-    : log.actorId.isNotEmpty
-    ? log.actorId
-    : 'Not recorded';
-
 class _AdminActivityScreenState extends ConsumerState<AdminActivityScreen> {
   String query = '';
   String? action;
   String? admin;
-  String? entity;
   String target = '';
   DateTimeRange? dates;
   @override
@@ -36,9 +29,6 @@ class _AdminActivityScreenState extends ConsumerState<AdminActivityScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          PageHeader(
-            title: 'Audit & Activity',
-            subtitle: 'Review administrator actions recorded in the platform audit log.',
           ),
           const SizedBox(height: 22),
           logs.when(
@@ -48,13 +38,6 @@ class _AdminActivityScreenState extends ConsumerState<AdminActivityScreen> {
               onRetry: () => ref.invalidate(activityLogsProvider),
             ),
             data: (items) {
-              final actions =
-                  items
-                      .map((log) => log.action)
-                      .where((value) => value.isNotEmpty)
-                      .toSet()
-                      .toList()
-                    ..sort();
               final administrators =
                   items
                       .map((log) => log.actorEmail)
@@ -62,32 +45,15 @@ class _AdminActivityScreenState extends ConsumerState<AdminActivityScreen> {
                       .toSet()
                       .toList()
                     ..sort();
-              final entities =
-                  items
-                      .map((log) => log.targetType)
-                      .where((type) => type.isNotEmpty)
-                      .toSet()
-                      .toList()
-                    ..sort();
               if (admin != null && !administrators.contains(admin)) {
                 admin = null;
               }
-              if (entity != null && !entities.contains(entity)) entity = null;
               final filtered = items.where(_matches).toList();
               return Column(
                 children: [
-                  _filters(administrators, entities, actions),
                   const SizedBox(height: 16),
                   if (filtered.isEmpty)
-                    Card(
                       child: EmptyState(
-                        icon: Icons.receipt_long_outlined,
-                        title: items.isEmpty
-                            ? 'No audit records found'
-                            : 'No records match filters',
-                        message: items.isEmpty
-                            ? 'The audit log contains no records.'
-                            : 'Try changing your audit filters.',
                       ),
                     )
                   else
@@ -109,38 +75,19 @@ class _AdminActivityScreenState extends ConsumerState<AdminActivityScreen> {
     );
   }
 
-  Widget _filters(
-    List<String> administrators,
-    List<String> entities,
-    List<String> actions,
-  ) => ResponsiveFilterToolbar(
-    search: TextField(
       onChanged: (value) => setState(() => query = value.toLowerCase()),
       decoration: const InputDecoration(
         prefixIcon: Icon(Icons.search),
         hintText: 'Search activity',
       ),
     ),
-    filters: [
-      SizedBox(
-        width: 200,
-        child: DropdownButtonFormField<String?>(
           isExpanded: true,
           initialValue: action,
           decoration: const InputDecoration(labelText: 'Action type'),
-          items: [
-            const DropdownMenuItem(value: null, child: Text('All actions')),
-            ...actions.map(
-              (value) =>
-                  DropdownMenuItem(value: value, child: Text(_title(value))),
             ),
           ],
           onChanged: (value) => setState(() => action = value),
         ),
-      ),
-      SizedBox(
-        width: 220,
-        child: DropdownButtonFormField<String?>(
           isExpanded: true,
           initialValue: admin,
           decoration: const InputDecoration(labelText: 'Administrator'),
@@ -156,28 +103,6 @@ class _AdminActivityScreenState extends ConsumerState<AdminActivityScreen> {
           onChanged: (value) => setState(() => admin = value),
         ),
       ),
-      SizedBox(
-        width: 200,
-        child: TextField(
-          onChanged: (value) => setState(() => target = value.toLowerCase()),
-          decoration: const InputDecoration(labelText: 'Entity ID'),
-        ),
-      ),
-      SizedBox(
-        width: 200,
-        child: DropdownButtonFormField<String?>(
-          isExpanded: true,
-          initialValue: entity,
-          decoration: const InputDecoration(labelText: 'Entity'),
-          items: [
-            const DropdownMenuItem(value: null, child: Text('All entities')),
-            ...entities.map(
-              (value) => DropdownMenuItem(value: value, child: Text(value)),
-            ),
-          ],
-          onChanged: (value) => setState(() => entity = value),
-        ),
-      ),
       OutlinedButton.icon(
         onPressed: _pickDates,
         icon: const Icon(Icons.date_range),
@@ -188,13 +113,6 @@ class _AdminActivityScreenState extends ConsumerState<AdminActivityScreen> {
         ),
       ),
     ],
-    activeFilterCount:
-        (query.isNotEmpty ? 1 : 0) +
-        (action == null ? 0 : 1) +
-        (admin == null ? 0 : 1) +
-        (target.isNotEmpty ? 1 : 0) +
-        (entity == null ? 0 : 1) +
-        (dates == null ? 0 : 1),
   );
 
   Widget _table(List<AdminAuditLog> logs) => SingleChildScrollView(
@@ -213,29 +131,9 @@ class _AdminActivityScreenState extends ConsumerState<AdminActivityScreen> {
             (log) => DataRow(
               cells: [
                 DataCell(
-                  Text(
-                    log.timestampAvailable
-                        ? DateFormat.yMMMd().add_jm().format(log.timestamp)
-                        : 'Not recorded',
-                  ),
-                ),
-                DataCell(Text(_actor(log))),
-                DataCell(_badge(log.action)),
-                DataCell(
-                  Text(
-                    '${log.targetType.isEmpty ? 'Unknown' : log.targetType} · ${log.targetId.isEmpty ? 'Not recorded' : log.targetId}',
-                  ),
                 ),
                 DataCell(
-                  SizedBox(
-                    width: 240,
-                    child: Text(
-                      log.description.isEmpty
-                          ? 'Details not recorded'
-                          : log.description,
-                    ),
                   ),
-                ),
                 DataCell(Text(log.reason ?? '—')),
               ],
             ),
@@ -256,9 +154,6 @@ class _AdminActivityScreenState extends ConsumerState<AdminActivityScreen> {
           children: [
             _badge(log.action),
             Text(
-              log.timestampAvailable
-                  ? DateFormat.MMMd().add_jm().format(log.timestamp)
-                  : 'Not recorded',
               style: const TextStyle(
                 fontSize: 12,
                 color: AppColors.textSecondary,
@@ -268,11 +163,9 @@ class _AdminActivityScreenState extends ConsumerState<AdminActivityScreen> {
         ),
         const SizedBox(height: 8),
         Text(
-          log.description.isEmpty ? 'Details not recorded' : log.description,
           style: const TextStyle(fontWeight: FontWeight.w600),
         ),
         Text(
-          '${_actor(log)} · ${log.targetType.isEmpty ? 'Unknown entity' : log.targetType} · ${log.targetId.isEmpty ? 'ID not recorded' : log.targetId}',
           style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
         ),
         if (log.reason != null)
@@ -317,7 +210,6 @@ class _AdminActivityScreenState extends ConsumerState<AdminActivityScreen> {
     return (query.isEmpty || text.contains(query)) &&
         (action == null || log.action == action) &&
         (admin == null || log.actorEmail == admin) &&
-        (entity == null || log.targetType == entity) &&
         (target.isEmpty || log.targetId.toLowerCase().contains(target)) &&
         (dates == null ||
             (!log.timestamp.isBefore(dates!.start) &&

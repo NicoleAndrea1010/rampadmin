@@ -1,28 +1,21 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
-import 'admin_account_menu.dart';
 
 final _tourTitleKey = GlobalKey();
 final _tourHelpKey = GlobalKey();
 
-class AdminTopBar extends StatelessWidget {
   const AdminTopBar({
     super.key,
     required this.title,
     required this.mobile,
     required this.onMenu,
-    this.onToggleSidebar,
-    this.sidebarCollapsed = false,
   });
   final String title;
   final bool mobile;
   final VoidCallback onMenu;
-  final VoidCallback? onToggleSidebar;
-  final bool sidebarCollapsed;
 
   @override
-  Widget build(BuildContext context) => Container(
     height: 76,
     padding: EdgeInsets.symmetric(horizontal: mobile ? 16 : 28),
     decoration: BoxDecoration(
@@ -36,18 +29,6 @@ class AdminTopBar extends StatelessWidget {
             message: 'Open navigation',
             child: IconButton(onPressed: onMenu, icon: const Icon(Icons.menu)),
           ),
-        if (!mobile && onToggleSidebar != null)
-          Tooltip(
-            message: sidebarCollapsed
-                ? 'Expand navigation'
-                : 'Collapse navigation',
-            child: IconButton(
-              onPressed: onToggleSidebar,
-              icon: Icon(
-                sidebarCollapsed ? Icons.menu_open_rounded : Icons.menu_rounded,
-              ),
-            ),
-          ),
         if (mobile) const SizedBox(width: 4),
         Expanded(
           child: Text(
@@ -58,7 +39,6 @@ class AdminTopBar extends StatelessWidget {
             style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
           ),
         ),
-        SizedBox(width: mobile ? 2 : 8),
         Tooltip(
           message: 'Help & Page Guide',
           child: IconButton(
@@ -68,19 +48,14 @@ class AdminTopBar extends StatelessWidget {
           ),
         ),
         SizedBox(width: mobile ? 4 : 8),
-        Tooltip(
           message: 'Notifications',
           child: IconButton(
             onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Notifications are not configured.'),
-              ),
             ),
             icon: const Icon(Icons.notifications_none),
           ),
         ),
         SizedBox(width: mobile ? 4 : 8),
-        const AdminProfileButton(),
       ],
     ),
   );
@@ -91,7 +66,6 @@ class AdminTopBar extends StatelessWidget {
         _TourStep(
           _tourTitleKey,
           'Dashboard overview',
-          'Review portfolio totals, payments, maintenance, and items requiring attention.',
         ),
         _TourStep(
           _tourHelpKey,
@@ -111,7 +85,6 @@ class AdminTopBar extends StatelessWidget {
           'Use Add landlord or a row action to create, edit, activate, suspend, reset access, or archive an account.',
         ),
       ],
-      'Raw Data Inspector' => [
         _TourStep(
           _tourTitleKey,
           'Operational records',
@@ -128,7 +101,6 @@ class AdminTopBar extends StatelessWidget {
           'Select a record to see its saved fields. This monitor does not edit payment or tenant source records.',
         ),
       ],
-      'Audit & Activity' => [
         _TourStep(
           _tourTitleKey,
           'Audit history',
@@ -143,42 +115,6 @@ class AdminTopBar extends StatelessWidget {
           _tourTitleKey,
           'Review details',
           'Use the description and reason fields to understand each account action.',
-        ),
-      ],
-      'Data Health' => [
-        _TourStep(
-          _tourTitleKey,
-          'Data Health',
-          'Review ownership and relationship warnings. Diagnostics are read-only.',
-        ),
-        _TourStep(
-          _tourHelpKey,
-          'Review an issue',
-          'Use the record ID and suggested action to investigate the source data.',
-        ),
-      ],
-      'System Health' => [
-        _TourStep(
-          _tourTitleKey,
-          'System Health',
-          'Review configured services and the latest operational data load.',
-        ),
-        _TourStep(
-          _tourHelpKey,
-          'Developer tools',
-          'Advanced read-only diagnostics, including Raw Data Inspector, are available below.',
-        ),
-      ],
-      'Properties' || 'Tenants' || 'Payments & Billing' || 'Maintenance' => [
-        _TourStep(
-          _tourTitleKey,
-          title,
-          'Search and filter current operational records, then open a row for its saved details.',
-        ),
-        _TourStep(
-          _tourHelpKey,
-          'Page guide',
-          'Use page-specific search and filters to narrow the records shown.',
         ),
       ],
       'Settings' => [
@@ -198,23 +134,12 @@ class AdminTopBar extends StatelessWidget {
           'Never share account credentials. Sensitive landlord operations are authorized and rate-limited server-side.',
         ),
       ],
-      'Profile' => [
-        _TourStep(
-          _tourTitleKey,
-          'Administrator profile',
-          'Review the authenticated account details and current session.',
-        ),
-      ],
       _ => [
         _TourStep(
           _tourTitleKey,
-          'Administrator page',
-          'Review the information and available actions on this page.',
         ),
         _TourStep(
           _tourHelpKey,
-          'Page guide',
-          'Use this guide to learn how to work with the current page.',
         ),
       ],
     };

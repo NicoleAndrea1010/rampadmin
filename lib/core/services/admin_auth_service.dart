@@ -25,14 +25,8 @@ class AdminAuthService {
     try {
       final token = await user.getIdTokenResult(true);
       final role = token.claims?['role'];
-      if (role == 'super_admin' || await _hasActiveAdminProfile(user.uid)) {
-        return user;
-      }
-    } catch (_) {
       await _auth.signOut();
-      rethrow;
     }
-
     await _auth.signOut();
     throw const AdminAccessException(
       'This account does not have super-admin access.',
@@ -48,7 +42,6 @@ class AdminAuthService {
       if (token.claims?['role'] == 'super_admin') return true;
       return await _hasActiveAdminProfile(user.uid);
     } catch (_) {
-      return false;
     }
   }
 
@@ -58,7 +51,6 @@ class AdminAuthService {
         .doc(uid)
         .get()
         .timeout(const Duration(seconds: 5));
-    return profile.exists && profile.data()?['status'] == 'active';
   }
 
   Future<void> sendPasswordReset(String email) {

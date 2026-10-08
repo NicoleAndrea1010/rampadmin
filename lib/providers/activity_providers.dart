@@ -4,7 +4,6 @@ import '../features/activity/admin_activity_repository.dart';
 import '../models/admin_audit_log.dart';
 
 final activityRepositoryProvider = Provider<AdminActivityRepository>(
-  (ref) => FirestoreAdminActivityRepository(),
 );
 
 final activityLogsProvider =
