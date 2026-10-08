@@ -61,8 +61,11 @@ abstract final class AdminTheme {
         elevation: 0,
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(16),
           side: BorderSide(color: border),
+        ),
+        shadowColor: Colors.black.withAlpha(
+          brightness == Brightness.light ? 10 : 0,
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
@@ -73,15 +76,15 @@ abstract final class AdminTheme {
           vertical: 15,
         ),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(10),
           borderSide: BorderSide(color: border),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(10),
           borderSide: BorderSide(color: border),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(10),
           borderSide: BorderSide(color: primary, width: 2),
         ),
       ),
@@ -89,7 +92,7 @@ abstract final class AdminTheme {
         style: ElevatedButton.styleFrom(
           minimumSize: const Size(44, 48),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(13),
+            borderRadius: BorderRadius.circular(10),
           ),
           textStyle: GoogleFonts.poppins(fontWeight: FontWeight.w600),
         ),
@@ -98,11 +101,25 @@ abstract final class AdminTheme {
         style: OutlinedButton.styleFrom(
           minimumSize: const Size(44, 48),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(13),
+            borderRadius: BorderRadius.circular(10),
           ),
         ),
       ),
       dividerColor: border,
+      popupMenuTheme: PopupMenuThemeData(
+        color: brightness == Brightness.light
+            ? AppColors.cardLight
+            : AppColors.darkElevated,
+        elevation: 8,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: border),
+        ),
+      ),
+      snackBarTheme: SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
       dataTableTheme: DataTableThemeData(
         headingTextStyle: GoogleFonts.poppins(
           fontWeight: FontWeight.w600,

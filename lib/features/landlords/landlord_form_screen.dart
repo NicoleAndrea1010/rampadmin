@@ -9,7 +9,6 @@ import '../../core/services/firebase_error_mapper.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/error_view.dart';
 import '../../core/widgets/ui_components.dart';
-import '../../core/widgets/status_badge.dart';
 import '../../models/landlord_account.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/landlord_providers.dart';
@@ -135,6 +134,10 @@ class _LandlordFormScreenState extends ConsumerState<LandlordFormScreen> {
     try {
       final now = DateTime.now();
       final controller = ref.read(landlordsProvider.notifier);
+      final admin = ref.read(currentAdminUserProvider);
+      if (admin == null) {
+        throw StateError('An authenticated administrator is required.');
+      }
       if (editing && existing != null) {
         await controller.updateLandlord(
           existing!.copyWith(
@@ -150,14 +153,16 @@ class _LandlordFormScreenState extends ConsumerState<LandlordFormScreen> {
         );
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Landlord profile and permissions updated.')),
+            const SnackBar(
+              content: Text('Landlord profile and permissions updated.'),
+            ),
           );
           context.go(AdminRoutes.landlord(existing!.uid));
         }
       } else {
         final created = await controller.create(
           LandlordAccount(
-            uid: 'mock_${now.microsecondsSinceEpoch}',
+            uid: '',
             email: email.text.trim().toLowerCase(),
             displayName: name.text.trim(),
             companyName: company.text.trim(),
@@ -169,8 +174,8 @@ class _LandlordFormScreenState extends ConsumerState<LandlordFormScreen> {
             permissions: permissions,
             createdAt: now,
             updatedAt: now,
-            createdBy: ref.read(currentAdminUserProvider)?.uid ?? 'superadmin',
-            updatedBy: ref.read(currentAdminUserProvider)?.uid ?? 'superadmin',
+            createdBy: admin.uid,
+            updatedBy: admin.uid,
           ),
         );
         if (mounted) {
@@ -187,7 +192,7 @@ class _LandlordFormScreenState extends ConsumerState<LandlordFormScreen> {
             content: Text(
               error.message == 'duplicate-email'
                   ? 'An account with this email already exists.'
-                  : 'The landlord could not be saved.',
+                  : error.message.toString(),
             ),
           ),
         );
@@ -345,27 +350,32 @@ class _LandlordFormScreenState extends ConsumerState<LandlordFormScreen> {
                         const SizedBox(height: 24),
                         _section('Account Access & Status'),
                         DropdownButtonFormField<LandlordStatus>(
+                          isExpanded: true,
                           initialValue: status,
                           decoration: const InputDecoration(
                             labelText: 'Account Status',
+                            helperText: 'Use account actions to change landlord access status.',
                           ),
                           items: LandlordStatus.values
+                              .where(
+                                (value) =>
+                                    value != LandlordStatus.unknown ||
+                                    status == LandlordStatus.unknown,
+                              )
                               .map(
                                 (s) => DropdownMenuItem(
                                   value: s,
-                                  child: Row(
-                                    children: [
-                                      StatusBadge(status: s),
-                                      const SizedBox(width: 10),
-                                      Text(_statusTitle(s)),
-                                    ],
+                                  child: Text(
+                                    s == LandlordStatus.unknown
+                                        ? existing?.statusLabel ?? 'Unknown'
+                                        : _statusTitle(s),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
                               )
                               .toList(),
-                          onChanged: (val) {
-                            if (val != null) setState(() => status = val);
-                          },
+                          onChanged: null,
                         ),
                         const SizedBox(height: 24),
                         _section('Unit Assignments & Employee Delegation'),
@@ -407,7 +417,10 @@ class _LandlordFormScreenState extends ConsumerState<LandlordFormScreen> {
                             children: assignedUnitIds
                                 .map(
                                   (unit) => Chip(
-                                    avatar: const Icon(Icons.apartment, size: 16),
+                                    avatar: const Icon(
+                                      Icons.apartment,
+                                      size: 16,
+                                    ),
                                     label: Text(unit),
                                     onDeleted: () => setState(
                                       () => assignedUnitIds.remove(unit),

@@ -4,9 +4,10 @@ import '../../models/landlord_account.dart';
 import '../theme/app_colors.dart';
 
 class StatusBadge extends StatelessWidget {
-  const StatusBadge({super.key, required this.status});
+  const StatusBadge({super.key, required this.status, this.label});
 
   final LandlordStatus status;
+  final String? label;
 
   @override
   Widget build(BuildContext context) {
@@ -30,6 +31,14 @@ class StatusBadge extends StatelessWidget {
         textColor = AppColors.textMuted;
         bgColor = AppColors.borderLight;
         break;
+      case LandlordStatus.unknown:
+        textColor = AppColors.textSecondary;
+        bgColor = AppColors.borderLight;
+        break;
+    }
+    if (Theme.of(context).brightness == Brightness.dark) {
+      textColor = Color.lerp(textColor, Colors.white, .2)!;
+      bgColor = textColor.withAlpha(36);
     }
 
     return Container(
@@ -40,9 +49,12 @@ class StatusBadge extends StatelessWidget {
         border: Border.all(color: textColor.withAlpha(50), width: 1),
       ),
       child: Text(
-        status == LandlordStatus.invited
-            ? 'PENDING ACTIVATION'
-            : status.name.toUpperCase(),
+        label ??
+            (status == LandlordStatus.invited
+                ? 'PENDING ACTIVATION'
+                : status == LandlordStatus.unknown
+                ? 'UNKNOWN'
+                : status.name.toUpperCase()),
         style: TextStyle(
           color: textColor,
           fontSize: 11,

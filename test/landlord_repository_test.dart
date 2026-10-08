@@ -9,12 +9,19 @@ void main() {
     final revenue = LandlordPaymentMetrics.sixMonthPaidRevenue([
       {
         'status': 'Paid',
+        'transactionType': 'Rent',
         'amount': 8500,
         'paymentDate': Timestamp.fromDate(DateTime(2026, 10, 2)),
       },
-      {'status': 'paid', 'baseRent': 1000, 'date': '2026-09-10T10:00:00Z'},
+      {
+        'status': 'paid',
+        'transactionType': 'Maintenance',
+        'baseRent': 1000,
+        'date': '2026-09-10T10:00:00Z',
+      },
       {
         'status': 'Pending',
+        'transactionType': 'Rent',
         'amount': 3000,
         'paymentDate': Timestamp.fromDate(DateTime(2026, 10, 4)),
       },
@@ -31,13 +38,38 @@ void main() {
     ], now);
 
     expect(revenue['2026-10'], 8500);
-    expect(revenue['2026-09'], 1000);
+    expect(revenue['2026-09'], 0);
     expect(revenue['2026-03'], isNull);
     expect(revenue.length, 6);
   });
 
+  test('incomplete paid rent records make revenue unavailable', () {
+    final revenue = LandlordPaymentMetrics.sixMonthPaidRevenue([
+      {'status': 'Paid', 'transactionType': 'Rent', 'amount': 8500},
+    ], DateTime(2026, 10, 8));
+
+    expect(revenue, isEmpty);
+  });
+
   test('mock repository enforces suspend before archive', () async {
-    final repository = MockLandlordRepository();
+    final now = DateTime.now();
+    LandlordAccount landlord(String uid, LandlordStatus status) =>
+        LandlordAccount(
+          uid: uid,
+          email: '$uid@example.test',
+          displayName: uid,
+          companyName: 'Test company',
+          phone: '',
+          status: status,
+          createdAt: now,
+          updatedAt: now,
+          createdBy: 'test',
+          updatedBy: 'test',
+        );
+    final repository = MockLandlordRepository([
+      landlord('landlord_001', LandlordStatus.active),
+      landlord('landlord_007', LandlordStatus.invited),
+    ]);
     await expectLater(
       repository.archiveLandlord('landlord_001'),
       throwsA(isA<StateError>()),

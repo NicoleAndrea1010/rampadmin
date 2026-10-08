@@ -14,10 +14,13 @@ import 'package:rampadmin/features/landlords/landlord_list_screen.dart';
 import 'package:rampadmin/features/landlords/landlord_repository.dart';
 import 'package:rampadmin/features/operations/operational_data_screen.dart';
 import 'package:rampadmin/features/settings/settings_screen.dart';
+import 'package:rampadmin/features/settings/profile_screen.dart';
 import 'package:rampadmin/providers/activity_providers.dart';
 import 'package:rampadmin/providers/dashboard_providers.dart';
 import 'package:rampadmin/providers/landlord_providers.dart';
 import 'package:rampadmin/providers/operational_data_providers.dart';
+
+import 'support/layout_test_data.dart';
 
 void main() {
   final screens = <String, Widget>{
@@ -31,12 +34,16 @@ void main() {
     'RAMP data': const OperationalDataScreen(),
     'activity': const AdminActivityScreen(),
     'settings': const SettingsScreen(),
+    'profile': const ProfileScreen(),
   };
   for (final size in [
     const Size(320, 700),
     const Size(390, 844),
+    const Size(480, 844),
     const Size(768, 900),
-    const Size(1366, 900),
+    const Size(1024, 900),
+    const Size(1280, 900),
+    const Size(1440, 900),
   ]) {
     for (final entry in screens.entries) {
       testWidgets('${entry.key} has no layout exception at ${size.width}px', (
@@ -71,22 +78,23 @@ void main() {
             GoRoute(path: '/activity', builder: (_, _) => const Scaffold()),
             GoRoute(path: '/operations', builder: (_, _) => const Scaffold()),
             GoRoute(path: '/settings', builder: (_, _) => const Scaffold()),
+            GoRoute(path: '/profile', builder: (_, _) => const Scaffold()),
           ],
         );
         await tester.pumpWidget(
           ProviderScope(
             overrides: [
               landlordRepositoryProvider.overrideWithValue(
-                MockLandlordRepository(),
+                MockLandlordRepository(layoutTestLandlords()),
               ),
               dashboardRepositoryProvider.overrideWithValue(
                 MockDashboardRepository(),
               ),
               activityRepositoryProvider.overrideWithValue(
-                MockAdminActivityRepository(),
+                MockAdminActivityRepository(layoutTestActivities()),
               ),
               operationalDataRepositoryProvider.overrideWithValue(
-                MockOperationalDataRepository(),
+                MockOperationalDataRepository(layoutTestOperationalRecords()),
               ),
             ],
             child: MaterialApp.router(

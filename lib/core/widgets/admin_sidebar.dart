@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../providers/auth_providers.dart';
 import '../constants/admin_routes.dart';
 import '../theme/app_colors.dart';
-import 'ui_components.dart';
+import '../../providers/settings_providers.dart';
+import 'admin_account_menu.dart';
 
 class AdminSidebar extends ConsumerWidget {
   const AdminSidebar({
@@ -19,63 +19,77 @@ class AdminSidebar extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final user = ref.watch(currentAdminUserProvider);
-    final name = user?.displayName?.trim().isNotEmpty == true
-        ? user!.displayName!
-        : user?.email?.split('@').first ?? 'Administrator';
+    final reduceMotion =
+        ref.watch(reducedMotionProvider) ||
+        MediaQuery.disableAnimationsOf(context);
     return Container(
-      width: isCompact ? 84 : 248,
+      width: isCompact ? 82 : 260,
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
+        color: Theme.of(context).brightness == Brightness.light
+            ? const Color(0xFFF8FAFE)
+            : Theme.of(context).colorScheme.surface,
         border: Border(
-          right: BorderSide(color: Theme.of(context).dividerColor),
+          right: BorderSide(
+            color: Theme.of(context).dividerColor.withAlpha(180),
+          ),
         ),
       ),
       child: SafeArea(
         child: Column(
           children: [
             Padding(
-              padding: EdgeInsets.symmetric(
-                horizontal: isCompact ? 18 : 22,
-                vertical: 24,
-              ),
+              padding: EdgeInsets.fromLTRB(isCompact ? 12 : 18, 18, 12, 20),
               child: Row(
                 mainAxisAlignment: isCompact
                     ? MainAxisAlignment.center
                     : MainAxisAlignment.start,
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(10),
+                    width: 42,
+                    height: 42,
                     decoration: BoxDecoration(
-                      color: AppColors.primaryTint,
-                      borderRadius: BorderRadius.circular(13),
+                      gradient: const LinearGradient(
+                        colors: [AppColors.primaryBlue, Color(0xFF4C8CFF)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(14),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.primaryBlue.withAlpha(28),
+                          blurRadius: 14,
+                          offset: const Offset(0, 5),
+                        ),
+                      ],
                     ),
                     child: const Icon(
                       Icons.apartment_rounded,
-                      color: AppColors.primaryBlue,
+                      color: Colors.white,
                     ),
                   ),
                   if (!isCompact) ...[
                     const SizedBox(width: 12),
-                    const Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'RAMP',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 18,
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'RAMP',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 18,
+                            ),
                           ),
-                        ),
-                        Text(
-                          'SUPER ADMIN',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: AppColors.textSecondary,
-                            letterSpacing: .8,
+                          Text(
+                            'SUPER ADMIN',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.textSecondary,
+                              letterSpacing: .8,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ],
                 ],
@@ -85,33 +99,54 @@ class AdminSidebar extends ConsumerWidget {
               child: ListView(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 children: [
-                  _group('OVERVIEW', [
+                  _group(context, 'OVERVIEW', reduceMotion, [
                     _Item(
                       'Dashboard',
                       Icons.dashboard_outlined,
                       AdminRoutes.dashboard,
                     ),
                   ]),
-                  _group('MANAGEMENT', [
+                  _group(context, 'MANAGEMENT', reduceMotion, [
                     _Item(
                       'Landlords',
                       Icons.apartment_outlined,
                       AdminRoutes.landlords,
                     ),
                     _Item(
-                      'RAMP Data',
-                      Icons.storage_outlined,
-                      AdminRoutes.operations,
+                      'Properties',
+                      Icons.domain_outlined,
+                      AdminRoutes.units,
+                    ),
+                    _Item('Tenants', Icons.people_outline, AdminRoutes.tenants),
+                    _Item(
+                      'Payments',
+                      Icons.payments_outlined,
+                      AdminRoutes.payments,
+                    ),
+                    _Item(
+                      'Maintenance',
+                      Icons.build_outlined,
+                      AdminRoutes.maintenance,
                     ),
                   ]),
-                  _group('MONITORING', [
+                  _group(context, 'ADMINISTRATION', reduceMotion, [
                     _Item(
-                      'Admin Activity',
-                      Icons.history_rounded,
+                      'Audit & Activity',
+                      Icons.receipt_long_outlined,
                       AdminRoutes.activity,
                     ),
+                    _Item(
+                      'Data Health',
+                      Icons.rule_outlined,
+                      AdminRoutes.dataIntegrity,
+                    ),
+                    _Item(
+                      'System Health',
+                      Icons.monitor_heart_outlined,
+                      AdminRoutes.syncHealth,
+                    ),
                   ]),
-                  _group('SYSTEM', [
+                  _group(context, 'SYSTEM', reduceMotion, [
                     _Item(
                       'Settings',
                       Icons.settings_outlined,
@@ -122,50 +157,8 @@ class AdminSidebar extends ConsumerWidget {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.all(12),
-              child: Container(
-                padding: EdgeInsets.all(isCompact ? 10 : 12),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).scaffoldBackgroundColor,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Row(
-                  children: [
-                    LandlordAvatar(name: name, radius: 18),
-                    if (!isCompact) ...[
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              name,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const Text(
-                              'Super Administrator',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: AppColors.textSecondary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Tooltip(
-                        message: 'Sign out',
-                        child: IconButton(
-                          onPressed: () =>
-                              ref.read(adminAuthServiceProvider).signOut(),
-                          icon: const Icon(Icons.logout, size: 20),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
+              padding: EdgeInsets.fromLTRB(isCompact ? 12 : 14, 8, 12, 12),
+              child: AdminIdentity(compact: isCompact),
             ),
           ],
         ),
@@ -173,78 +166,136 @@ class AdminSidebar extends ConsumerWidget {
     );
   }
 
-  Widget _group(String label, List<_Item> items) => Padding(
+  Widget _group(
+    BuildContext context,
+    String label,
+    bool reduceMotion,
+    List<_Item> items,
+  ) => Padding(
     padding: const EdgeInsets.only(bottom: 18),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (!isCompact)
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 7),
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
             child: Text(
               label,
-              style: const TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 12,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontSize: 9,
                 fontWeight: FontWeight.w600,
                 letterSpacing: .7,
               ),
             ),
           ),
-        ...items.map(_nav),
+        ...items.map((item) => _nav(context, item, reduceMotion)),
       ],
     ),
   );
 
-  Widget _nav(_Item item) {
-    final selected = item.route == AdminRoutes.landlords
-        ? currentRoute.startsWith('/landlords')
-        : item.route == AdminRoutes.operations
-        ? currentRoute.startsWith(AdminRoutes.operations)
-        : currentRoute == item.route;
+  Widget _nav(BuildContext context, _Item item, bool reduceMotion) {
+    final selected =
+        currentRoute == item.route ||
+        (item.route == AdminRoutes.landlords &&
+            currentRoute.startsWith('/landlords'));
     return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Tooltip(
-        message: isCompact ? item.label : '',
+      padding: const EdgeInsets.only(bottom: 3),
+      child: _SidebarNavigationTile(
+        item: item,
+        selected: selected,
+        compact: isCompact,
+        reduceMotion: reduceMotion,
+        onTap: () => onNavigate(item.route),
+      ),
+    );
+  }
+}
+
+class _SidebarNavigationTile extends StatefulWidget {
+  const _SidebarNavigationTile({
+    required this.item,
+    required this.selected,
+    required this.compact,
+    required this.reduceMotion,
+    required this.onTap,
+  });
+  final _Item item;
+  final bool selected;
+  final bool compact;
+  final bool reduceMotion;
+  final VoidCallback onTap;
+
+  @override
+  State<_SidebarNavigationTile> createState() => _SidebarNavigationTileState();
+}
+
+class _SidebarNavigationTileState extends State<_SidebarNavigationTile> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedColor = Theme.of(context).colorScheme.primary;
+    final background = widget.selected
+        ? selectedColor.withAlpha(
+            Theme.of(context).brightness == Brightness.dark ? 35 : 16,
+          )
+        : _hovered
+        ? Theme.of(context).colorScheme.surfaceContainerHighest.withAlpha(110)
+        : Colors.transparent;
+    return Tooltip(
+      message: widget.compact ? widget.item.label : '',
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
         child: Material(
           color: Colors.transparent,
           child: InkWell(
-            borderRadius: BorderRadius.circular(13),
-            onTap: () => onNavigate(item.route),
+            borderRadius: BorderRadius.circular(12),
+            onTap: widget.onTap,
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 150),
+              duration: widget.reduceMotion
+                  ? Duration.zero
+                  : const Duration(milliseconds: 150),
+              constraints: const BoxConstraints(minHeight: 42),
               padding: EdgeInsets.symmetric(
-                horizontal: isCompact ? 18 : 13,
-                vertical: 12,
+                horizontal: widget.compact ? 14 : 13,
+                vertical: 9,
               ),
               decoration: BoxDecoration(
-                color: selected ? AppColors.primaryTint : Colors.transparent,
-                borderRadius: BorderRadius.circular(13),
+                color: background,
+                borderRadius: BorderRadius.circular(12),
               ),
               child: Row(
-                mainAxisAlignment: isCompact
+                mainAxisAlignment: widget.compact
                     ? MainAxisAlignment.center
                     : MainAxisAlignment.start,
                 children: [
-                  Icon(
-                    item.icon,
-                    size: 21,
-                    color: selected
-                        ? AppColors.primaryBlue
-                        : AppColors.textSecondary,
+                  AnimatedScale(
+                    scale: widget.selected || _hovered ? 1.05 : 1,
+                    duration: widget.reduceMotion
+                        ? Duration.zero
+                        : const Duration(milliseconds: 150),
+                    child: Icon(
+                      widget.item.icon,
+                      size: 20,
+                      color: widget.selected
+                          ? selectedColor
+                          : Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
-                  if (!isCompact) ...[
+                  if (!widget.compact) ...[
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
-                        item.label,
+                        widget.item.label,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontWeight: selected
+                          fontWeight: widget.selected
                               ? FontWeight.w600
                               : FontWeight.w400,
-                          color: selected ? AppColors.primaryBlue : null,
+                          color: widget.selected ? selectedColor : null,
                         ),
                       ),
                     ),

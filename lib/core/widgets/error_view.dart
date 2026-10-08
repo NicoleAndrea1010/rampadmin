@@ -30,11 +30,8 @@ class ErrorView extends StatelessWidget {
             const SizedBox(height: 16),
             Text(
               message,
-              style: const TextStyle(
-                color: AppColors.textPrimary,
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-              ),
+              style: Theme.of(context).textTheme.titleSmall
+                  ?.copyWith(fontSize: 15, fontWeight: FontWeight.w600),
               textAlign: TextAlign.center,
             ),
             if (onRetry != null) ...[

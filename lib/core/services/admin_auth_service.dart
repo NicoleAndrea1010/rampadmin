@@ -25,62 +25,40 @@ class AdminAuthService {
     try {
       final token = await user.getIdTokenResult(true);
       final role = token.claims?['role'];
-
-      if (role != 'super_admin' && !await _hasActiveAdminProfile(user.uid)) {
-        if (user.email?.toLowerCase() != 'nicoleandrearparedes@gmail.com' &&
-            !user.email!.toLowerCase().contains('admin')) {
-          await _auth.signOut();
-          throw const AdminAccessException(
-            'This account does not have super-admin access.',
-          );
-        }
+      if (role == 'super_admin' || await _hasActiveAdminProfile(user.uid)) {
+        return user;
       }
-    } catch (e) {
-      if (e is AdminAccessException) rethrow;
-      // If Firestore or claims check fails, allow default admin email
-      if (user.email?.toLowerCase() != 'nicoleandrearparedes@gmail.com' &&
-          !user.email!.toLowerCase().contains('admin')) {
-        await _auth.signOut();
-        throw const AdminAccessException(
-          'This account does not have super-admin access.',
-        );
-      }
+    } catch (_) {
+      await _auth.signOut();
+      rethrow;
     }
 
-    return user;
+    await _auth.signOut();
+    throw const AdminAccessException(
+      'This account does not have super-admin access.',
+    );
   }
 
   Future<bool> isCurrentUserSuperAdmin() async {
     final user = _auth.currentUser;
     if (user == null) return false;
 
-    // Default super admin accounts
-    if (user.email?.toLowerCase() == 'nicoleandrearparedes@gmail.com' ||
-        user.email?.toLowerCase().contains('admin') == true) {
-      return true;
-    }
-
     try {
       final token = await user.getIdTokenResult(true);
       if (token.claims?['role'] == 'super_admin') return true;
       return await _hasActiveAdminProfile(user.uid);
     } catch (_) {
-      return true;
+      return false;
     }
   }
 
   Future<bool> _hasActiveAdminProfile(String uid) async {
-    try {
-      final profile = await FirebaseFirestore.instance
-          .collection('adminProfiles')
-          .doc(uid)
-          .get()
-          .timeout(const Duration(seconds: 5));
-      if (profile.exists) {
-        return profile.data()?['status'] == 'active';
-      }
-    } catch (_) {}
-    return true;
+    final profile = await FirebaseFirestore.instance
+        .collection('adminProfiles')
+        .doc(uid)
+        .get()
+        .timeout(const Duration(seconds: 5));
+    return profile.exists && profile.data()?['status'] == 'active';
   }
 
   Future<void> sendPasswordReset(String email) {

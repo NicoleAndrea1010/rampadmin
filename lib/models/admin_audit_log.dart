@@ -11,6 +11,7 @@ class AdminAuditLog {
     required this.description,
     this.reason,
     required this.timestamp,
+    this.timestampAvailable = true,
   });
 
   final String id;
@@ -22,11 +23,13 @@ class AdminAuditLog {
   final String description;
   final String? reason;
   final DateTime timestamp;
+  final bool timestampAvailable;
 
   factory AdminAuditLog.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> document,
   ) {
     final data = document.data() ?? {};
+    final timestamp = data['timestamp'];
     return AdminAuditLog(
       id: document.id,
       actorId: data['actorId'] as String? ?? '',
@@ -36,9 +39,10 @@ class AdminAuditLog {
       targetId: data['targetId'] as String? ?? '',
       description: data['description'] as String? ?? '',
       reason: data['reason'] as String?,
-      timestamp:
-          (data['timestamp'] as Timestamp?)?.toDate() ??
-          DateTime.fromMillisecondsSinceEpoch(0),
+      timestamp: timestamp is Timestamp
+          ? timestamp.toDate()
+          : DateTime.fromMillisecondsSinceEpoch(0),
+      timestampAvailable: timestamp is Timestamp,
     );
   }
 }

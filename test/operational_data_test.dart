@@ -28,9 +28,25 @@ void main() {
     expect(current.status, 'Occupied');
     expect(legacy.ownerId, 'landlord-legacy');
     expect(unassigned.ownerId, isEmpty);
+
+    const inconsistent = OperationalRecord(
+      collection: 'units',
+      id: 'unit-inconsistent',
+      data: {
+        'landlordId': 'landlord-current',
+        'landlord_id': 'landlord-legacy',
+      },
+    );
+    expect(inconsistent.hasConflictingOwnerIds, isTrue);
+    expect(inconsistent.ownerId, isEmpty);
+    expect(
+      inconsistent.ownerIds,
+      containsAll(['landlord-current', 'landlord-legacy']),
+    );
+    expect(inconsistent.ownerDescription, contains('Inconsistent owners'));
   });
 
-  testWidgets('operational data list opens a live record detail view', (
+  testWidgets('operational data list opens a record detail view', (
     tester,
   ) async {
     const record = OperationalRecord(
@@ -59,6 +75,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(find.text('Add Record'), findsNothing);
+    expect(find.text('Edit Record'), findsNothing);
+    expect(find.text('Delete Record'), findsNothing);
     expect(find.text('Maria Santos'), findsOneWidget);
     await tester.ensureVisible(find.text('Maria Santos'));
     await tester.pumpAndSettle();

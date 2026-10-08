@@ -1,18 +1,15 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../core/config/app_config.dart';
 import '../features/dashboard/dashboard_repository.dart';
 import '../models/dashboard_summary.dart';
 import '../models/landlord_account.dart';
 import 'landlord_providers.dart';
 
 final dashboardRepositoryProvider = Provider<DashboardRepository>(
-  (ref) => AppConfig.useMockData
-      ? MockDashboardRepository()
-      : FirestoreDashboardRepository(),
+  (ref) => SupabaseDashboardRepository(),
 );
 
-final dashboardMockDataProvider = FutureProvider<DashboardMockData>((ref) {
+final dashboardDataProvider = FutureProvider<DashboardData>((ref) {
   ref.watch(landlordsProvider);
   return ref.read(dashboardRepositoryProvider).getSummary();
 });

@@ -3,11 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
-import '../../core/config/app_config.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/error_view.dart';
 import '../../core/widgets/ui_components.dart';
 import '../../providers/operational_data_providers.dart';
+
 import 'package:rampadmin/features/operations/operational_data_repository.dart';
 
 class OperationalDataScreen extends ConsumerStatefulWidget {
@@ -41,16 +41,11 @@ class _OperationalDataScreenState extends ConsumerState<OperationalDataScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           PageHeader(
-            title: 'RAMP Data',
-            subtitle: 'Inspect live units, tenants, payments, and maintenance records.',
-            badge: Chip(
-              avatar: Icon(
-                AppConfig.useMockData
-                    ? Icons.science_outlined
-                    : Icons.lock_outline,
-                size: 16,
-              ),
-              label: Text(AppConfig.useMockData ? 'Sample mode' : 'Read-only'),
+            title: 'Raw Data Inspector',
+            subtitle: 'Read-only view of Supabase operational records for diagnostics.',
+            badge: const Chip(
+              avatar: Icon(Icons.storage_outlined, size: 16),
+              label: Text('Supabase · Read only'),
             ),
             actions: [
               OutlinedButton.icon(
@@ -58,18 +53,8 @@ class _OperationalDataScreenState extends ConsumerState<OperationalDataScreen> {
                 icon: const Icon(Icons.refresh),
                 label: const Text('Refresh'),
               ),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primaryBlue,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: _showAddRecordDialog,
-                icon: const Icon(Icons.add),
-                label: const Text('Add Record'),
-              ),
             ],
           ),
-          const SizedBox(height: 12),
           const SizedBox(height: 20),
           records.when(
             loading: () => const LoadingSkeleton(rows: 8),
@@ -155,13 +140,12 @@ class _OperationalDataScreenState extends ConsumerState<OperationalDataScreen> {
                       value: 'all',
                       child: Text('All records'),
                     ),
-                    ...FirestoreOperationalDataRepository.collections.values
-                        .map(
-                          (value) => DropdownMenuItem(
-                            value: value,
-                            child: Text(_collectionName(value)),
-                          ),
-                        ),
+                    ...SupabaseOperationalDataRepository.collections.values.map(
+                      (value) => DropdownMenuItem(
+                        value: value,
+                        child: Text(_collectionName(value)),
+                      ),
+                    ),
                   ],
                   onChanged: (value) =>
                       setState(() => _collection = value ?? 'all'),
@@ -292,6 +276,7 @@ class _OperationalDataScreenState extends ConsumerState<OperationalDataScreen> {
           clipBehavior: Clip.antiAlias,
           child: records.isEmpty
               ? const EmptyState(
+                  icon: Icons.manage_search_rounded,
                   title: 'No records found',
                   message: 'Try another record type, status, or search term.',
                 )
@@ -313,23 +298,38 @@ class _OperationalDataScreenState extends ConsumerState<OperationalDataScreen> {
       final double cardWidth = constraints.maxWidth >= 900
           ? (constraints.maxWidth - 36) / 4
           : constraints.maxWidth >= 500
-              ? (constraints.maxWidth - 12) / 2
-              : constraints.maxWidth;
+          ? (constraints.maxWidth - 12) / 2
+          : constraints.maxWidth;
       return Wrap(
         spacing: 12,
         runSpacing: 12,
         children: [
           SizedBox(
             width: cardWidth,
-            child: _countCard('Units', records, 'units', Icons.apartment_outlined),
+            child: _countCard(
+              'Units',
+              records,
+              'units',
+              Icons.apartment_outlined,
+            ),
           ),
           SizedBox(
             width: cardWidth,
-            child: _countCard('Tenants', records, 'tenants', Icons.groups_outlined),
+            child: _countCard(
+              'Tenants',
+              records,
+              'tenants',
+              Icons.groups_outlined,
+            ),
           ),
           SizedBox(
             width: cardWidth,
-            child: _countCard('Payments', records, 'payments', Icons.payments_outlined),
+            child: _countCard(
+              'Payments',
+              records,
+              'payments',
+              Icons.payments_outlined,
+            ),
           ),
           SizedBox(
             width: cardWidth,
@@ -356,9 +356,7 @@ class _OperationalDataScreenState extends ConsumerState<OperationalDataScreen> {
       title: Text(
         '$title · ${records.where((r) => r.collection == collection).length}',
       ),
-      subtitle: Text(
-        AppConfig.useMockData ? 'Sample records' : 'Live records',
-      ),
+      subtitle: Text('Supabase records'),
     ),
   );
 
@@ -374,9 +372,7 @@ class _OperationalDataScreenState extends ConsumerState<OperationalDataScreen> {
       if (_value(record.data['referenceNumber']).isNotEmpty)
         'Ref ${_value(record.data['referenceNumber'])}',
     ].join(' · ');
-    final owner = record.ownerId.isEmpty
-        ? 'Unassigned legacy record'
-        : 'Owner ${record.ownerId}';
+    final owner = record.ownerDescription;
     return ListTile(
       leading: CircleAvatar(
         backgroundColor: AppColors.primaryTint,
@@ -430,37 +426,13 @@ class _OperationalDataScreenState extends ConsumerState<OperationalDataScreen> {
               ListTile(
                 dense: true,
                 title: const Text('Landlord owner'),
-                subtitle: Text(
-                  record.ownerId.isEmpty
-                      ? 'Unassigned legacy record'
-                      : record.ownerId,
-                ),
+                subtitle: Text(record.ownerDescription),
               ),
             ],
           ),
         ),
       ),
       actions: [
-        OutlinedButton.icon(
-          onPressed: () {
-            Navigator.pop(context);
-            _showEditRecordDialog(record);
-          },
-          icon: const Icon(Icons.edit_outlined, size: 18),
-          label: const Text('Edit Record'),
-        ),
-        ElevatedButton.icon(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.error,
-            foregroundColor: Colors.white,
-          ),
-          onPressed: () {
-            Navigator.pop(context);
-            _confirmDeleteRecord(record);
-          },
-          icon: const Icon(Icons.delete_outline, size: 18),
-          label: const Text('Delete record'),
-        ),
         TextButton(
           onPressed: () => Navigator.pop(context),
           child: const Text('Close'),
@@ -468,266 +440,6 @@ class _OperationalDataScreenState extends ConsumerState<OperationalDataScreen> {
       ],
     ),
   );
-
-  Future<void> _showAddRecordDialog() async {
-    final titleController = TextEditingController();
-    final unitController = TextEditingController();
-    final landlordController = TextEditingController();
-    String col = 'units';
-    String status = 'Active';
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Add New Record'),
-          content: SizedBox(
-            width: 460,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  DropdownButtonFormField<String>(
-                    initialValue: col,
-                    decoration: const InputDecoration(labelText: 'Record Collection'),
-                    items: const [
-                      DropdownMenuItem(value: 'units', child: Text('Units')),
-                      DropdownMenuItem(value: 'tenants', child: Text('Tenants')),
-                      DropdownMenuItem(value: 'payments', child: Text('Payments')),
-                      DropdownMenuItem(value: 'maintenanceTickets', child: Text('Maintenance')),
-                    ],
-                    onChanged: (val) => setDialogState(() => col = val ?? 'units'),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: titleController,
-                    decoration: const InputDecoration(
-                      labelText: 'Title / Name / Reference *',
-                      hintText: 'e.g. Unit 105 or John Doe',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: unitController,
-                    decoration: const InputDecoration(
-                      labelText: 'Unit Number / Identifier',
-                      hintText: 'e.g. Unit 105',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: landlordController,
-                    decoration: const InputDecoration(
-                      labelText: 'Landlord Owner ID (Optional)',
-                      hintText: 'e.g. landlord_001',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    onChanged: (val) => status = val,
-                    decoration: InputDecoration(
-                      labelText: 'Status',
-                      hintText: col == 'payments' ? 'Paid' : 'Active',
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryBlue,
-                foregroundColor: Colors.white,
-              ),
-              onPressed: () async {
-                final name = titleController.text.trim();
-                if (name.isEmpty) return;
-                Navigator.pop(dialogContext);
-                final id = 'rec_${DateTime.now().millisecondsSinceEpoch}';
-                final newRecord = OperationalRecord(
-                  collection: col,
-                  id: id,
-                  data: {
-                    'title': name,
-                    'name': name,
-                    'unitNumber': unitController.text.trim(),
-                    'landlordId': landlordController.text.trim(),
-                    'status': status.trim().isEmpty ? 'Active' : status.trim(),
-                    'createdAt': DateTime.now().toIso8601String(),
-                  },
-                );
-                await ref
-                    .read(operationalRecordsProvider.notifier)
-                    .addRecord(newRecord);
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('New $col record saved successfully.')),
-                  );
-                }
-              },
-              child: const Text('Save Record'),
-            ),
-          ],
-        ),
-      ),
-    );
-    titleController.dispose();
-    unitController.dispose();
-    landlordController.dispose();
-  }
-
-  Future<void> _showEditRecordDialog(OperationalRecord record) async {
-    final titleController = TextEditingController(
-      text: _title(record),
-    );
-    final unitController = TextEditingController(
-      text: _value(record.data['unitNumber']),
-    );
-    final statusController = TextEditingController(
-      text: record.status,
-    );
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('Edit ${_collectionName(record.collection)} Record'),
-        content: SizedBox(
-          width: 460,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: titleController,
-                decoration: const InputDecoration(labelText: 'Title / Name'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: unitController,
-                decoration: const InputDecoration(labelText: 'Unit Number'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: statusController,
-                decoration: const InputDecoration(labelText: 'Status'),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primaryBlue,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () async {
-              Navigator.pop(dialogContext);
-              final updatedData = Map<String, dynamic>.from(record.data);
-              updatedData['title'] = titleController.text.trim();
-              updatedData['name'] = titleController.text.trim();
-              updatedData['unitNumber'] = unitController.text.trim();
-              updatedData['status'] = statusController.text.trim();
-              updatedData['updatedAt'] = DateTime.now().toIso8601String();
-
-              final updated = OperationalRecord(
-                collection: record.collection,
-                id: record.id,
-                data: updatedData,
-              );
-              await ref
-                  .read(operationalRecordsProvider.notifier)
-                  .updateRecord(updated);
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Record updated successfully.')),
-                );
-              }
-            },
-            child: const Text('Save Changes'),
-          ),
-        ],
-      ),
-    );
-    titleController.dispose();
-    unitController.dispose();
-    statusController.dispose();
-  }
-
-  Future<void> _confirmDeleteRecord(OperationalRecord record) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Row(
-          children: const [
-            Icon(Icons.warning_amber_rounded, color: AppColors.error),
-            SizedBox(width: 8),
-            Text('Confirm Deletion'),
-          ],
-        ),
-        content: Text(
-          'Are you sure you want to delete "${_title(record)}"? This operational record will be permanently deleted.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.error,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Delete Permanently'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true && mounted) {
-      await ref
-          .read(operationalRecordsProvider.notifier)
-          .deleteRecord(record.collection, record.id);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Record "${_title(record)}" deleted successfully.'),
-          ),
-        );
-      }
-    }
-  }
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.error,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Delete Permanently'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true && mounted) {
-      // In read-only / sample mode or Firestore mode
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Record "${_title(record)}" deleted successfully.'),
-        ),
-      );
-    }
-  }
 
   String _title(OperationalRecord record) {
     for (final field in const [

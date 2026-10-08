@@ -6,7 +6,6 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/constants/admin_routes.dart';
-import '../../core/config/app_config.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/services/firebase_error_mapper.dart';
 import '../../core/widgets/error_view.dart';
@@ -38,7 +37,7 @@ class LandlordDetailsScreen extends ConsumerWidget {
           return const ErrorView(message: 'Landlord record not found.');
         }
         return DefaultTabController(
-          length: 6,
+          length: 9,
           child: SingleChildScrollView(
             padding: EdgeInsets.all(
               MediaQuery.sizeOf(context).width < 700 ? 20 : 32,
@@ -76,11 +75,13 @@ class LandlordDetailsScreen extends ConsumerWidget {
                         _metric(
                           width,
                           'Paid This Month',
-                          NumberFormat.currency(
-                            locale: 'en_PH',
-                            symbol: '₱',
-                            decimalDigits: 0,
-                          ).format(landlord.paidThisMonth),
+                          landlord.paymentMetricsAvailable
+                              ? NumberFormat.currency(
+                                  locale: 'en_PH',
+                                  symbol: '₱',
+                                  decimalDigits: 0,
+                                ).format(landlord.paidThisMonth)
+                              : 'Unavailable',
                           Icons.payments_outlined,
                           AppColors.success,
                         ),
@@ -102,11 +103,14 @@ class LandlordDetailsScreen extends ConsumerWidget {
                   isScrollable: true,
                   tabs: [
                     Tab(text: 'Overview'),
-                    Tab(text: 'Units'),
+                    Tab(text: 'Properties'),
                     Tab(text: 'Tenants'),
+                    Tab(text: 'Tenancies'),
                     Tab(text: 'Payments'),
                     Tab(text: 'Maintenance'),
-                    Tab(text: 'Admin History'),
+                    Tab(text: 'Documents'),
+                    Tab(text: 'Activity'),
+                    Tab(text: 'Settings'),
                   ],
                 ),
                 SizedBox(
@@ -116,9 +120,37 @@ class LandlordDetailsScreen extends ConsumerWidget {
                       _overview(context, ref, landlord),
                       _units(context, ref, landlord.uid),
                       _tenants(context, ref, landlord.uid),
+                      _unsupportedTab(
+                        'Tenancies',
+                        'A confirmed Supabase tenancies table and schema are required. Current tenant fields are not converted into tenancy history.',
+                      ),
                       _payments(context, ref, landlord.uid),
                       _maintenance(context, ref, landlord.uid),
+                      _unsupportedTab(
+                        'Documents',
+                        'A confirmed Supabase documents table and storage metadata contract are required.',
+                      ),
                       _history(ref, landlord),
+                      _preview('Account settings', [
+                        ListTile(
+                          title: const Text('Account status'),
+                          subtitle: Text(landlord.statusLabel),
+                        ),
+                        ListTile(
+                          title: const Text('Joined'),
+                          subtitle: Text(
+                            DateFormat.yMMMd().format(landlord.createdAt),
+                          ),
+                        ),
+                        ListTile(
+                          title: const Text('Management scope'),
+                          subtitle: Text(
+                            landlord.canManageAllUnits
+                                ? 'All portfolio units'
+                                : '${landlord.assignedUnitIds.length} assigned units',
+                          ),
+                        ),
+                      ]),
                     ],
                   ),
                 ),
@@ -295,7 +327,7 @@ class LandlordDetailsScreen extends ConsumerWidget {
       'Phone': item.phone,
       'Company': item.companyName,
       'Units': '${item.unitCount}',
-      'Account status': _statusTitle(item.status),
+      'Account status': item.statusLabel,
       'Created date': DateFormat.yMMMd().format(item.createdAt),
       'Last updated': DateFormat.yMMMd().add_jm().format(item.updatedAt),
       'Last sign-in': item.lastSignInAt == null
@@ -359,105 +391,196 @@ class LandlordDetailsScreen extends ConsumerWidget {
     );
   }
 
-  Widget _overview(BuildContext context, WidgetRef ref, LandlordAccount item) =>
-      _preview('Account overview & Unit Delegation', [
+  Widget _overview(BuildContext context, WidgetRef ref, LandlordAccount item) {
+    final operational = ref.watch(operationalRecordsProvider);
+    final liveOverview = operational.when(
+      loading: () => const [ListTile(title: Text('Loading portfolio data…'))],
+      error: (_, _) => const [
         ListTile(
-          title: const Text('Account status'),
-          subtitle: Text(_statusTitle(item.status)),
-          leading: const Icon(Icons.verified_user_outlined),
+          title: Text('Portfolio occupancy unavailable'),
+          subtitle: Text('Supabase operational data could not be loaded.'),
         ),
-        ListTile(
-          title: const Text('Portfolio occupancy'),
-          subtitle: Text('${item.unitCount} units · ${item.tenantCount} tenants'),
-          leading: const Icon(Icons.pie_chart_outline),
+      ],
+      data: (records) {
+        final units = records.where(
+          (record) =>
+              record.collection == 'units' &&
+              record.ownerId == item.uid &&
+              record.data['isArchived'] != true &&
+              record.data['archived'] != true &&
+              _stringValue(record.data['archivedAt']).isEmpty &&
+              (record.data['status'] as String? ?? '').toLowerCase() !=
+                  'archived',
+        );
+        final ownedUnits = units.toList();
+        final occupied = ownedUnits
+            .where(
+              (unit) =>
+                  unit.status.toLowerCase() == 'occupied' ||
+                  _stringValue(
+                    unit.data['tenantId'] ?? unit.data['currentTenantId'],
+                  ).isNotEmpty,
+            )
+            .length;
+        final conflicting = records
+            .where(
+              (record) =>
+                  record.hasConflictingOwnerIds &&
+                  record.ownerIds.contains(item.uid),
+            )
+            .length;
+        final pendingAmount = records
+            .where(
+              (record) =>
+                  record.collection == 'payments' &&
+                  record.ownerId == item.uid &&
+                  (record.status.toLowerCase() == 'pending'),
+            )
+            .fold<double>(0, (total, record) {
+              final amount = record.data['amount'];
+              return total + (amount is num && amount.isFinite ? amount : 0);
+            });
+        return [
+          ListTile(
+            title: const Text('Portfolio occupancy'),
+            subtitle: Text(
+              ownedUnits.isEmpty
+                  ? 'No linked units'
+                  : '$occupied of ${ownedUnits.length} units occupied · ${(occupied * 100 / ownedUnits.length).round()}%',
+            ),
+            leading: const Icon(Icons.pie_chart_outline),
+          ),
+          ListTile(
+            title: const Text('Pending payment balance'),
+            subtitle: Text(_currency(pendingAmount)),
+            leading: const Icon(Icons.account_balance_outlined),
+          ),
+          ListTile(
+            title: const Text('Ownership integrity warnings'),
+            subtitle: Text(
+              '$conflicting records with conflicting landlord IDs',
+            ),
+            leading: const Icon(Icons.warning_amber_outlined),
+          ),
+        ];
+      },
+    );
+    return _preview('Account overview & Unit Delegation', [
+      ListTile(
+        title: const Text('Joined'),
+        subtitle: Text(DateFormat.yMMMd().format(item.createdAt)),
+        leading: const Icon(Icons.calendar_today_outlined),
+      ),
+      ListTile(
+        title: const Text('Account status'),
+        subtitle: Text(item.statusLabel),
+        leading: const Icon(Icons.verified_user_outlined),
+      ),
+      ...liveOverview,
+      ListTile(
+        title: const Text('Portfolio records'),
+        subtitle: Text('${item.unitCount} units · ${item.tenantCount} tenants'),
+        leading: const Icon(Icons.apartment_outlined),
+      ),
+      ListTile(
+        title: const Text('Paid this month'),
+        subtitle: Text(
+          item.paymentMetricsAvailable
+              ? _currency(item.paidThisMonth)
+              : 'Unavailable',
         ),
-        ListTile(
-          title: const Text('Paid this month'),
-          subtitle: Text(_currency(item.paidThisMonth)),
-          leading: const Icon(Icons.payments_outlined),
-        ),
-        ListTile(
-          title: const Text('Unit Management Scope'),
-          subtitle: Text(
-            item.canManageAllUnits
-                ? 'All Portfolio Units'
-                : (item.assignedUnitIds.isEmpty
+        leading: const Icon(Icons.payments_outlined),
+      ),
+      ListTile(
+        title: const Text('Unit Management Scope'),
+        subtitle: Text(
+          item.canManageAllUnits
+              ? 'All Portfolio Units'
+              : (item.assignedUnitIds.isEmpty
                     ? 'No specific units assigned'
                     : 'Assigned: ${item.assignedUnitIds.join(", ")}'),
-          ),
-          leading: const Icon(Icons.apartment_outlined),
         ),
-        ListTile(
-          title: const Text('Delegated Employees (While Away)'),
-          subtitle: item.assignedEmployeeEmails.isEmpty
-              ? const Text('No temporary employee managers delegated.')
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SizedBox(height: 4),
-                    Text(
-                      'Currently delegated to: ${item.assignedEmployeeEmails.join(", ")}',
-                      style: const TextStyle(fontWeight: FontWeight.w500),
+        leading: const Icon(Icons.apartment_outlined),
+      ),
+      ListTile(
+        title: const Text('Delegated Employees (While Away)'),
+        subtitle: item.assignedEmployeeEmails.isEmpty
+            ? const Text('No temporary employee managers delegated.')
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 4),
+                  Text(
+                    'Currently delegated to: ${item.assignedEmployeeEmails.join(", ")}',
+                    style: const TextStyle(fontWeight: FontWeight.w500),
+                  ),
+                  const SizedBox(height: 8),
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryBlue,
+                      foregroundColor: Colors.white,
                     ),
-                    const SizedBox(height: 8),
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primaryBlue,
-                        foregroundColor: Colors.white,
-                      ),
-                      onPressed: () async {
-                        final controller =
-                            ref.read(landlordsProvider.notifier);
-                        await controller.updateLandlord(
-                          item.copyWith(assignedEmployeeEmails: []),
-                        );
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'Unit management returned back exclusively to primary landlord account!',
-                              ),
+                    onPressed: () async {
+                      final controller = ref.read(landlordsProvider.notifier);
+                      await controller.updateLandlord(
+                        item.copyWith(assignedEmployeeEmails: []),
+                      );
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Unit management returned back exclusively to primary landlord account!',
                             ),
-                          );
-                        }
-                      },
-                      icon: const Icon(Icons.undo, size: 16),
-                      label: const Text('Return Management Back to Me'),
+                          ),
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.undo, size: 16),
+                    label: const Text('Return Management Back to Me'),
+                  ),
+                ],
+              ),
+        leading: const Icon(Icons.badge_outlined),
+      ),
+      ListTile(
+        title: const Text('Management Permissions'),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: item.permissions
+                .map(
+                  (p) => Chip(
+                    visualDensity: VisualDensity.compact,
+                    avatar: const Icon(Icons.check_circle_outline, size: 14),
+                    label: Text(
+                      p.replaceAll('manage_', '').replaceAll('_', ' '),
+                      style: const TextStyle(fontSize: 12),
                     ),
-                  ],
-                ),
-          leading: const Icon(Icons.badge_outlined),
+                  ),
+                )
+                .toList(),
+          ),
         ),
+        leading: const Icon(Icons.security_outlined),
+      ),
+      if (item.suspensionReason != null)
         ListTile(
-          title: const Text('Management Permissions'),
-          subtitle: Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: item.permissions
-                  .map(
-                    (p) => Chip(
-                      visualDensity: VisualDensity.compact,
-                      avatar: const Icon(Icons.check_circle_outline, size: 14),
-                      label: Text(
-                        p.replaceAll('manage_', '').replaceAll('_', ' '),
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  )
-                  .toList(),
-            ),
-          ),
-          leading: const Icon(Icons.security_outlined),
+          title: const Text('Suspension reason'),
+          subtitle: Text(item.suspensionReason!),
+          leading: const Icon(Icons.warning_amber, color: AppColors.error),
         ),
-        if (item.suspensionReason != null)
-          ListTile(
-            title: const Text('Suspension reason'),
-            subtitle: Text(item.suspensionReason!),
-            leading: const Icon(Icons.warning_amber, color: AppColors.error),
-          ),
-      ]);
+    ]);
+  }
+
+  Widget _unsupportedTab(String title, String requirement) => _preview(title, [
+    ListTile(
+      leading: const Icon(Icons.storage_outlined),
+      title: const Text('Backend support required'),
+      subtitle: Text(requirement),
+    ),
+  ]);
   Widget _units(BuildContext context, WidgetRef ref, String landlordId) =>
       _operationalPreview(context, ref, 'Units', 'units', landlordId);
   Widget _tenants(BuildContext context, WidgetRef ref, String landlordId) =>
@@ -489,7 +612,7 @@ class LandlordDetailsScreen extends ConsumerWidget {
             children: [
               _preview(
                 'Paid revenue by month',
-                revenue.isEmpty
+                revenue.isEmpty || revenue.every((entry) => entry.value == 0)
                     ? [
                         const ListTile(
                           title: Text(
@@ -532,31 +655,59 @@ class LandlordDetailsScreen extends ConsumerWidget {
         landlordId,
       );
   Widget _history(WidgetRef ref, LandlordAccount item) {
-    final logs =
-        ref
-            .watch(activityLogsProvider)
-            .value
-            ?.where((log) => log.targetId == item.uid)
-            .toList() ??
-        [];
-    return _preview(
-      'Admin History',
-      logs.isEmpty
-          ? [const ListTile(title: Text('No account actions recorded yet.'))]
-          : logs
-                .map(
-                  (log) => ListTile(
-                    leading: const Icon(Icons.history),
-                    title: Text(
-                      _title(log.action.replaceAll('_', ' ').toLowerCase()),
-                    ),
-                    subtitle: Text(
-                      '${log.description}\n${DateFormat.yMMMd().add_jm().format(log.timestamp)}',
-                    ),
-                  ),
-                )
-                .toList(),
-    );
+    return ref
+        .watch(activityLogsProvider)
+        .when(
+          loading: () =>
+              _preview('Audit history', [const LoadingSkeleton(rows: 3)]),
+          error: (_, _) => _preview('Audit history', [
+            const ListTile(
+              title: Text('Unable to load audit history.'),
+              subtitle: Text('Refresh the audit log and try again.'),
+            ),
+          ]),
+          data: (items) {
+            final logs = items
+                .where((log) => log.targetId == item.uid)
+                .toList();
+            return _preview(
+              'Audit history',
+              logs.isEmpty
+                  ? [
+                      const ListTile(
+                        title: Text(
+                          'No audit records found for this landlord.',
+                        ),
+                      ),
+                    ]
+                  : logs
+                        .map(
+                          (log) => ListTile(
+                            leading: const Icon(Icons.history),
+                            title: Text(
+                              log.action.isEmpty
+                                  ? 'Unknown action'
+                                  : _title(
+                                      log.action
+                                          .replaceAll('_', ' ')
+                                          .toLowerCase(),
+                                    ),
+                            ),
+                            subtitle: Text(
+                              '${log.description.isEmpty ? 'Details not recorded' : log.description}\n'
+                              '${log.actorEmail.isNotEmpty
+                                  ? log.actorEmail
+                                  : log.actorId.isNotEmpty
+                                  ? log.actorId
+                                  : 'Actor not recorded'} · '
+                              '${log.timestampAvailable ? DateFormat.yMMMd().add_jm().format(log.timestamp) : 'Time not recorded'}',
+                            ),
+                          ),
+                        )
+                        .toList(),
+            );
+          },
+        );
   }
 
   Widget _preview(String title, List<Widget> children) => Card(
@@ -600,7 +751,7 @@ class LandlordDetailsScreen extends ConsumerWidget {
               .where(
                 (record) =>
                     record.collection == collection &&
-                    record.ownerId == landlordId,
+                    record.ownerIds.contains(landlordId),
               )
               .toList();
           if (owned.isEmpty) {
@@ -615,7 +766,7 @@ class LandlordDetailsScreen extends ConsumerWidget {
             ]);
           }
           return _preview(
-            '$title · ${AppConfig.useMockData ? 'Sample data' : 'Live records'}',
+            '$title · Supabase records',
             owned.map((record) {
               final data = record.data;
               final name =
@@ -634,6 +785,8 @@ class LandlordDetailsScreen extends ConsumerWidget {
                 if (status is String && status.isNotEmpty) status,
                 if (data['unitNumber'] is String) data['unitNumber'] as String,
                 if (data['tenantName'] is String) data['tenantName'] as String,
+                if (record.hasConflictingOwnerIds)
+                  'OWNERSHIP CONFLICT · ${record.ownerIds.join(' / ')}',
               ].join(' · ');
               return ListTile(
                 leading: Icon(switch (collection) {
@@ -675,9 +828,7 @@ class LandlordDetailsScreen extends ConsumerWidget {
       await _runMutation(
         context,
         () => controller.sendPasswordReset(item.uid),
-        AppConfig.useMockData
-            ? 'Sample password reset action recorded.'
-            : 'Password reset email sent.',
+        'Password reset email sent.',
       );
       return;
     }
@@ -786,7 +937,8 @@ class LandlordDetailsScreen extends ConsumerWidget {
                       'When active, account manages all units. Turn off to restrict to specific unit IDs.',
                     ),
                     value: canManageAll,
-                    onChanged: (val) => setDialogState(() => canManageAll = val),
+                    onChanged: (val) =>
+                        setDialogState(() => canManageAll = val),
                   ),
                   if (!canManageAll) ...[
                     const SizedBox(height: 12),
@@ -800,7 +952,8 @@ class LandlordDetailsScreen extends ConsumerWidget {
                               hintText: 'e.g., Unit 101, B2-204',
                             ),
                             onSubmitted: (val) {
-                              if (val.trim().isNotEmpty && !units.contains(val.trim())) {
+                              if (val.trim().isNotEmpty &&
+                                  !units.contains(val.trim())) {
                                 setDialogState(() {
                                   units.add(val.trim());
                                   unitInput.clear();
@@ -833,7 +986,8 @@ class LandlordDetailsScreen extends ConsumerWidget {
                             (u) => Chip(
                               avatar: const Icon(Icons.apartment, size: 14),
                               label: Text(u),
-                              onDeleted: () => setDialogState(() => units.remove(u)),
+                              onDeleted: () =>
+                                  setDialogState(() => units.remove(u)),
                             ),
                           )
                           .toList(),
@@ -847,7 +1001,10 @@ class LandlordDetailsScreen extends ConsumerWidget {
                   const SizedBox(height: 4),
                   const Text(
                     'Sub-account emails authorized to access and manage these units:',
-                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textSecondary,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   Row(
@@ -894,7 +1051,8 @@ class LandlordDetailsScreen extends ConsumerWidget {
                           (e) => Chip(
                             avatar: const Icon(Icons.person, size: 14),
                             label: Text(e),
-                            onDeleted: () => setDialogState(() => emps.remove(e)),
+                            onDeleted: () =>
+                                setDialogState(() => emps.remove(e)),
                           ),
                         )
                         .toList(),
@@ -926,7 +1084,9 @@ class LandlordDetailsScreen extends ConsumerWidget {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('Unit assignments and employee delegations saved.'),
+                      content: Text(
+                        'Unit assignments and employee delegations saved.',
+                      ),
                     ),
                   );
                 }
@@ -1030,13 +1190,11 @@ class LandlordDetailsScreen extends ConsumerWidget {
       )
       .join(' ');
 
-  String _statusTitle(LandlordStatus value) => value == LandlordStatus.invited
-      ? 'Pending activation'
-      : _title(value.name);
-
   String _currency(double value) => NumberFormat.currency(
     locale: 'en_PH',
     symbol: '₱',
     decimalDigits: 0,
   ).format(value);
+
+  String _stringValue(Object? value) => value?.toString().trim() ?? '';
 }

@@ -6,7 +6,6 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/constants/admin_routes.dart';
-import '../../core/config/app_config.dart';
 import '../../core/services/firebase_error_mapper.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/error_view.dart';
@@ -23,6 +22,7 @@ class LandlordListScreen extends ConsumerStatefulWidget {
 
 class _LandlordListScreenState extends ConsumerState<LandlordListScreen> {
   late final TextEditingController search;
+  String? _mutatingUid;
 
   @override
   void initState() {
@@ -48,7 +48,7 @@ class _LandlordListScreenState extends ConsumerState<LandlordListScreen> {
         children: [
           PageHeader(
             title: 'Landlords',
-            subtitle: 'Review landlord profiles, properties, payments, and account status.',
+            subtitle: 'Manage landlord accounts and access.',
             actions: [
               OutlinedButton.icon(
                 onPressed: () => ref.invalidate(landlordsProvider),
@@ -82,7 +82,10 @@ class _LandlordListScreenState extends ConsumerState<LandlordListScreen> {
                   .toList();
               return Column(
                 children: [
-                  if (all.any((item) => !item.metricsAvailable)) ...[
+                  if (all.any(
+                    (item) =>
+                        !item.metricsAvailable || !item.paymentMetricsAvailable,
+                  )) ...[
                     _metricsNotice(),
                     const SizedBox(height: 14),
                   ],
@@ -94,12 +97,19 @@ class _LandlordListScreenState extends ConsumerState<LandlordListScreen> {
                     clipBehavior: Clip.antiAlias,
                     child: pageItems.isEmpty
                         ? EmptyState(
-                            title: 'No landlords found',
-                            message: 'Try clearing or changing your filters.',
-                            action: TextButton(
-                              onPressed: _clear,
-                              child: const Text('Clear filters'),
-                            ),
+                            icon: Icons.apartment_outlined,
+                            title: all.isEmpty
+                                ? 'No landlords yet'
+                                : 'No landlords found',
+                            message: all.isEmpty
+                                ? 'Landlord accounts will appear here once registered.'
+                                : 'Try clearing or changing your filters.',
+                            action: all.isEmpty
+                                ? null
+                                : TextButton(
+                                    onPressed: _clear,
+                                    child: const Text('Clear filters'),
+                                  ),
                           )
                         : LayoutBuilder(
                             builder: (context, constraints) =>
@@ -150,9 +160,17 @@ class _LandlordListScreenState extends ConsumerState<LandlordListScreen> {
         child: Row(
           children: [
             _countPill('All', all.length, filters.status == null, null),
-            for (final status in LandlordStatus.values)
+            for (final status in LandlordStatus.values.where(
+              (status) =>
+                  status != LandlordStatus.unknown ||
+                  all.any((item) => item.status == LandlordStatus.unknown),
+            ))
               _countPill(
-                _title(status.name),
+                status == LandlordStatus.unknown
+                    ? 'Unknown'
+                    : status == LandlordStatus.invited
+                    ? 'Pending / Invitations'
+                    : _title(status.name),
                 all.where((item) => item.status == status).length,
                 filters.status == status,
                 status,
@@ -186,95 +204,44 @@ class _LandlordListScreenState extends ConsumerState<LandlordListScreen> {
     ),
   );
 
-  Widget _filterBar(LandlordFilters filters) => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final controls = [
-            TextField(
-              controller: search,
-              onChanged: (value) =>
-                  _set(filters.copyWith(query: value, page: 0)),
-              decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.search),
-                hintText: 'Name, company, or email',
-              ),
-            ),
-            DropdownButtonFormField<LandlordStatus?>(
-              isExpanded: true,
-              initialValue: filters.status,
-              decoration: const InputDecoration(labelText: 'Status'),
-              items: [
-                const DropdownMenuItem(
-                  value: null,
-                  child: Text('All statuses'),
-                ),
-                ...LandlordStatus.values.map(
-                  (item) => DropdownMenuItem(
-                    value: item,
-                    child: Text(_title(item.name)),
-                  ),
-                ),
-              ],
-              onChanged: (value) => _set(
-                filters.copyWith(
-                  status: value,
-                  clearStatus: value == null,
-                  page: 0,
-                ),
-              ),
-            ),
-            DropdownButtonFormField<String>(
-              isExpanded: true,
-              initialValue: filters.sort,
-              decoration: const InputDecoration(labelText: 'Sort'),
-              items: const [
-                DropdownMenuItem(value: 'newest', child: Text('Newest')),
-                DropdownMenuItem(value: 'oldest', child: Text('Oldest')),
-                DropdownMenuItem(value: 'az', child: Text('Name A–Z')),
-                DropdownMenuItem(value: 'za', child: Text('Name Z–A')),
-                DropdownMenuItem(value: 'units', child: Text('Most units')),
-                DropdownMenuItem(
-                  value: 'revenue',
-                  child: Text('Highest paid this month'),
-                ),
-              ],
-              onChanged: (value) =>
-                  _set(filters.copyWith(sort: value, page: 0)),
-            ),
-            TextButton.icon(
-              onPressed: _clear,
-              icon: const Icon(Icons.filter_alt_off),
-              label: const Text('Clear filters'),
-            ),
-          ];
-          if (constraints.maxWidth < 850) {
-            return Column(
-              children: controls
-                  .map(
-                    (item) => Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: item,
-                    ),
-                  )
-                  .toList(),
-            );
-          }
-          return Row(
-            children: [
-              Expanded(flex: 2, child: controls[0]),
-              const SizedBox(width: 10),
-              Expanded(child: controls[1]),
-              const SizedBox(width: 10),
-              Expanded(child: controls[2]),
-              const SizedBox(width: 8),
-              controls[3],
-            ],
-          );
-        },
+  Widget _filterBar(LandlordFilters filters) => ResponsiveFilterToolbar(
+    search: TextField(
+      controller: search,
+      onChanged: (value) => _set(filters.copyWith(query: value, page: 0)),
+      decoration: const InputDecoration(
+        prefixIcon: Icon(Icons.search),
+        hintText: 'Search landlords',
       ),
     ),
+    filters: [
+      SizedBox(
+        width: 220,
+        child: DropdownButtonFormField<String>(
+          isExpanded: true,
+          initialValue: filters.sort,
+          decoration: const InputDecoration(labelText: 'Sort'),
+          items: const [
+            DropdownMenuItem(value: 'newest', child: Text('Newest')),
+            DropdownMenuItem(value: 'oldest', child: Text('Oldest')),
+            DropdownMenuItem(value: 'az', child: Text('Name A–Z')),
+            DropdownMenuItem(value: 'za', child: Text('Name Z–A')),
+            DropdownMenuItem(value: 'units', child: Text('Most units')),
+            DropdownMenuItem(
+              value: 'revenue',
+              child: Text('Highest paid this month'),
+            ),
+          ],
+          onChanged: (value) => _set(filters.copyWith(sort: value, page: 0)),
+        ),
+      ),
+      TextButton.icon(
+        onPressed: _clear,
+        icon: const Icon(Icons.filter_alt_off),
+        label: const Text('Clear filters'),
+      ),
+    ],
+    activeFilterCount:
+        (filters.query.isNotEmpty ? 1 : 0) + (filters.sort == 'newest' ? 0 : 1),
   );
 
   Widget _table(List<LandlordAccount> items) => SingleChildScrollView(
@@ -300,7 +267,10 @@ class _LandlordListScreenState extends ConsumerState<LandlordListScreen> {
                     borderRadius: BorderRadius.circular(8),
                     onTap: () => context.go(AdminRoutes.landlord(item.uid)),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 6,
+                        horizontal: 4,
+                      ),
                       child: Row(
                         children: [
                           LandlordAvatar(name: item.displayName),
@@ -332,9 +302,21 @@ class _LandlordListScreenState extends ConsumerState<LandlordListScreen> {
                 ),
                 DataCell(SizedBox(width: 145, child: Text(item.companyName))),
                 DataCell(Text(item.phone)),
-                DataCell(StatusBadge(status: item.status)),
-                DataCell(Text('${item.unitCount}')),
-                DataCell(Text(_currency(item.paidThisMonth))),
+                DataCell(
+                  StatusBadge(status: item.status, label: item.statusLabel),
+                ),
+                DataCell(
+                  Text(
+                    item.metricsAvailable ? '${item.unitCount}' : 'Unavailable',
+                  ),
+                ),
+                DataCell(
+                  Text(
+                    item.paymentMetricsAvailable
+                        ? _currency(item.paidThisMonth)
+                        : 'Unavailable',
+                  ),
+                ),
                 DataCell(Text(DateFormat.yMMMd().format(item.createdAt))),
                 DataCell(
                   Text(
@@ -352,7 +334,8 @@ class _LandlordListScreenState extends ConsumerState<LandlordListScreen> {
                         child: IconButton(
                           icon: const Icon(Icons.visibility_outlined, size: 20),
                           color: AppColors.primaryBlue,
-                          onPressed: () => context.go(AdminRoutes.landlord(item.uid)),
+                          onPressed: () =>
+                              context.go(AdminRoutes.landlord(item.uid)),
                         ),
                       ),
                       Tooltip(
@@ -360,7 +343,8 @@ class _LandlordListScreenState extends ConsumerState<LandlordListScreen> {
                         child: IconButton(
                           icon: const Icon(Icons.edit_outlined, size: 20),
                           color: AppColors.textSecondary,
-                          onPressed: () => context.go(AdminRoutes.landlordEdit(item.uid)),
+                          onPressed: () =>
+                              context.go(AdminRoutes.landlordEdit(item.uid)),
                         ),
                       ),
                       _menu(item),
@@ -408,7 +392,7 @@ class _LandlordListScreenState extends ConsumerState<LandlordListScreen> {
           const SizedBox(height: 12),
           Text(item.email),
           Text(
-            '${item.unitCount} units · ${_currency(item.paidThisMonth)} paid this month · Joined ${DateFormat.yMMMd().format(item.createdAt)}',
+            '${item.metricsAvailable ? '${item.unitCount} units' : 'Unit totals unavailable'} · ${item.paymentMetricsAvailable ? '${_currency(item.paidThisMonth)} paid this month' : 'Payment totals unavailable'} · Joined ${DateFormat.yMMMd().format(item.createdAt)}',
             style: const TextStyle(
               color: AppColors.textSecondary,
               fontSize: 12,
@@ -421,6 +405,7 @@ class _LandlordListScreenState extends ConsumerState<LandlordListScreen> {
 
   Widget _menu(LandlordAccount item) => PopupMenuButton<String>(
     tooltip: 'Account actions',
+    enabled: _mutatingUid == null,
     onSelected: (action) => _action(item, action),
     itemBuilder: (_) => [
       const PopupMenuItem(value: 'view', child: Text('View details')),
@@ -432,16 +417,11 @@ class _LandlordListScreenState extends ConsumerState<LandlordListScreen> {
         const PopupMenuItem(value: 'reset', child: Text('Send password reset')),
         const PopupMenuItem(value: 'suspend', child: Text('Suspend')),
       ],
-      if (item.status == LandlordStatus.suspended ||
-          item.status == LandlordStatus.archived) ...[
+      if (item.status == LandlordStatus.suspended) ...[
         if (item.status == LandlordStatus.suspended)
           const PopupMenuItem(value: 'reactivate', child: Text('Reactivate')),
         if (item.status == LandlordStatus.suspended)
           const PopupMenuItem(value: 'archive', child: Text('Archive')),
-        const PopupMenuItem(
-          value: 'delete',
-          child: Text('Delete account', style: TextStyle(color: AppColors.error)),
-        ),
       ],
       if (item.status == LandlordStatus.invited)
         const PopupMenuItem(
@@ -469,6 +449,7 @@ class _LandlordListScreenState extends ConsumerState<LandlordListScreen> {
           'Activate',
         )) {
       await _runMutation(
+        item.uid,
         () => controller.activate(item.uid),
         'Landlord account activated.',
       );
@@ -476,10 +457,9 @@ class _LandlordListScreenState extends ConsumerState<LandlordListScreen> {
     }
     if (action == 'reset') {
       await _runMutation(
+        item.uid,
         () => controller.sendPasswordReset(item.uid),
-        AppConfig.useMockData
-            ? 'Sample password reset action recorded.'
-            : 'Password reset email sent.',
+        'Password reset email sent.',
       );
       return;
     }
@@ -487,6 +467,7 @@ class _LandlordListScreenState extends ConsumerState<LandlordListScreen> {
       final reason = await _suspendDialog();
       if (reason != null) {
         await _runMutation(
+          item.uid,
           () => controller.suspend(item.uid, reason),
           'Account suspended.',
         );
@@ -500,6 +481,7 @@ class _LandlordListScreenState extends ConsumerState<LandlordListScreen> {
           'Reactivate',
         )) {
       await _runMutation(
+        item.uid,
         () => controller.reactivate(item.uid),
         'Account reactivated.',
       );
@@ -512,29 +494,21 @@ class _LandlordListScreenState extends ConsumerState<LandlordListScreen> {
           'Archive account',
         )) {
       await _runMutation(
+        item.uid,
         () => controller.archive(item.uid),
         'Account archived.',
-      );
-      return;
-    }
-    if (action == 'delete' &&
-        await _confirm(
-          'Delete landlord account permanently?',
-          'This will permanently delete ${item.displayName}\'s account and remove profile records. THIS CANNOT BE UNDONE.',
-          'Delete account permanently',
-        )) {
-      await _runMutation(
-        () => controller.archive(item.uid),
-        'Account deleted permanently.',
       );
       return;
     }
   }
 
   Future<void> _runMutation(
+    String uid,
     Future<void> Function() mutation,
     String successMessage,
   ) async {
+    if (_mutatingUid != null) return;
+    setState(() => _mutatingUid = uid);
     try {
       await mutation();
       _snack(successMessage);
@@ -546,6 +520,8 @@ class _LandlordListScreenState extends ConsumerState<LandlordListScreen> {
       _snack(error.message.toString());
     } on ArgumentError catch (error) {
       _snack(error.message?.toString() ?? 'The action could not be completed.');
+    } finally {
+      if (mounted) setState(() => _mutatingUid = null);
     }
   }
 
@@ -713,7 +689,7 @@ class _LandlordListScreenState extends ConsumerState<LandlordListScreen> {
   }
 
   String _title(String value) => value == 'invited'
-      ? 'Pending activation'
+      ? 'Pending / Invitations'
       : '${value[0].toUpperCase()}${value.substring(1)}';
 
   String _currency(double value) => NumberFormat.currency(

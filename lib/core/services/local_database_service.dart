@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+
 import '../../models/landlord_account.dart';
 import '../../features/operations/operational_data_repository.dart';
 
@@ -17,7 +18,9 @@ class LocalDatabaseService {
     if (_initialized) return;
     try {
       if (kDebugMode) {
-        debugPrint('[LocalDatabaseService] Initialized local SQLite cache store.');
+        debugPrint(
+          '[LocalDatabaseService] Initialized local SQLite cache store.',
+        );
       }
       _initialized = true;
     } catch (e) {

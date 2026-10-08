@@ -1,6 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../core/config/app_config.dart';
 import '../features/landlords/landlord_repository.dart';
 import '../models/landlord_account.dart';
 import 'activity_providers.dart';
@@ -8,9 +7,7 @@ import 'activity_providers.dart';
 import '../core/services/local_database_service.dart';
 
 final landlordRepositoryProvider = Provider<LandlordRepository>(
-  (ref) => AppConfig.useMockData
-      ? MockLandlordRepository()
-      : FirestoreLandlordRepository(),
+  (ref) => FirestoreLandlordRepository(),
 );
 
 final landlordsProvider =
@@ -48,11 +45,7 @@ class LandlordsController extends AsyncNotifier<List<LandlordAccount>> {
     ];
     state = AsyncData(updatedList);
     await LocalDatabaseService.instance.cacheLandlords(updatedList);
-    await _refreshActivity(
-      action: 'LANDLORD_CREATED',
-      targetId: created.uid,
-      description: '${created.companyName} was added',
-    );
+    _refreshActivity();
     return created;
   }
 
@@ -65,11 +58,7 @@ class LandlordsController extends AsyncNotifier<List<LandlordAccount>> {
       state = AsyncData(updatedList);
       await LocalDatabaseService.instance.cacheLandlords(updatedList);
     }
-    await _refreshActivity(
-      action: 'LANDLORD_UPDATED',
-      targetId: landlord.uid,
-      description: '${landlord.companyName} information was updated',
-    );
+    _refreshActivity();
   }
 
   Future<void> suspend(String uid, String reason) async {
@@ -88,13 +77,7 @@ class LandlordsController extends AsyncNotifier<List<LandlordAccount>> {
       state = AsyncData(updatedList);
       await LocalDatabaseService.instance.cacheLandlords(updatedList);
     }
-    await _refreshActivity(
-      uid: uid,
-      targetId: uid,
-      action: 'LANDLORD_SUSPENDED',
-      description: 'Account suspended',
-      reason: reason,
-    );
+    _refreshActivity();
   }
 
   Future<void> activate(String uid) async {
@@ -109,12 +92,7 @@ class LandlordsController extends AsyncNotifier<List<LandlordAccount>> {
       state = AsyncData(updatedList);
       await LocalDatabaseService.instance.cacheLandlords(updatedList);
     }
-    await _refreshActivity(
-      uid: uid,
-      targetId: uid,
-      action: 'LANDLORD_ACTIVATED',
-      description: 'Account activated',
-    );
+    _refreshActivity();
   }
 
   Future<void> reactivate(String uid) async {
@@ -129,12 +107,7 @@ class LandlordsController extends AsyncNotifier<List<LandlordAccount>> {
       state = AsyncData(updatedList);
       await LocalDatabaseService.instance.cacheLandlords(updatedList);
     }
-    await _refreshActivity(
-      uid: uid,
-      targetId: uid,
-      action: 'LANDLORD_REACTIVATED',
-      description: 'Account reactivated',
-    );
+    _refreshActivity();
   }
 
   Future<void> archive(String uid) async {
@@ -152,49 +125,16 @@ class LandlordsController extends AsyncNotifier<List<LandlordAccount>> {
       state = AsyncData(updatedList);
       await LocalDatabaseService.instance.cacheLandlords(updatedList);
     }
-    await _refreshActivity(
-      uid: uid,
-      targetId: uid,
-      action: 'LANDLORD_ARCHIVED',
-      description: 'Account archived',
-    );
+    _refreshActivity();
   }
 
   Future<void> sendPasswordReset(String uid) async {
     await _repository.sendPasswordReset(uid);
-    await _refreshActivity(
-      uid: uid,
-      targetId: uid,
-      action: 'PASSWORD_RESET_SENT',
-      description: 'Password reset email sent',
-    );
+    _refreshActivity();
   }
 
-  Future<void> _reload() async =>
-      state = AsyncData(await _repository.getLandlords());
-
-  Future<void> _refreshActivity({
-    String? uid,
-    required String action,
-    required String targetId,
-    required String description,
-    String? reason,
-  }) async {
-    if (!AppConfig.useMockData) {
-      ref.invalidate(activityLogsProvider);
-      return;
-    }
-    final item = uid == null ? null : await get(uid);
-    await ref
-        .read(activityLogsProvider.notifier)
-        .record(
-          action: action,
-          targetId: targetId,
-          description: item == null
-              ? description
-              : '${item.companyName}: $description',
-          reason: reason,
-        );
+  void _refreshActivity() {
+    ref.invalidate(activityLogsProvider);
   }
 }
 

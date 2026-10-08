@@ -27,13 +27,14 @@ class FirestoreAdminActivityRepository implements AdminActivityRepository {
         actorId: data['actorId'] as String? ?? '',
         actorEmail: data['actorEmail'] as String? ?? '',
         action: data['action'] as String? ?? '',
-        targetType: data['targetType'] as String? ?? 'landlord',
+        targetType: data['targetType'] as String? ?? '',
         targetId: data['targetId'] as String? ?? '',
         description: data['description'] as String? ?? '',
         reason: data['reason'] as String?,
         timestamp:
             (data['timestamp'] as Timestamp?)?.toDate() ??
             DateTime.fromMillisecondsSinceEpoch(0),
+        timestampAvailable: data['timestamp'] is Timestamp,
       );
     }).toList();
   }
@@ -47,7 +48,11 @@ class FirestoreAdminActivityRepository implements AdminActivityRepository {
 }
 
 class MockAdminActivityRepository implements AdminActivityRepository {
-  final List<AdminAuditLog> _items = _seed();
+  // TODO: Align admin operational source with canonical RAMP backend.
+  MockAdminActivityRepository([List<AdminAuditLog>? initialItems])
+    : _items = List.from(initialItems ?? const []);
+
+  final List<AdminAuditLog> _items;
 
   @override
   Future<List<AdminAuditLog>> getActivities() async {
@@ -59,72 +64,5 @@ class MockAdminActivityRepository implements AdminActivityRepository {
   Future<AdminAuditLog> addActivity(AdminAuditLog activity) async {
     _items.insert(0, activity);
     return activity;
-  }
-
-  static List<AdminAuditLog> _seed() {
-    final now = DateTime.now();
-    AdminAuditLog log(
-      int id,
-      String action,
-      String target,
-      String description,
-      Duration age, {
-      String? reason,
-    }) => AdminAuditLog(
-      id: 'activity_$id',
-      actorId: 'nicole_admin',
-      actorEmail: 'nicole@ramp.example',
-      action: action,
-      targetType: 'landlord',
-      targetId: target,
-      description: description,
-      reason: reason,
-      timestamp: now.subtract(age),
-    );
-    return [
-      log(
-        1,
-        'LANDLORD_CREATED',
-        'landlord_001',
-        'QA Alpha Rentals was added',
-        const Duration(minutes: 10),
-      ),
-      log(
-        3,
-        'LANDLORD_SUSPENDED',
-        'landlord_009',
-        'Maple Residences was suspended',
-        const Duration(days: 1),
-        reason: 'Account compliance review',
-      ),
-      log(
-        4,
-        'PASSWORD_RESET_SENT',
-        'landlord_003',
-        'Reset email sent to Riverstone Leasing',
-        const Duration(days: 2),
-      ),
-      log(
-        5,
-        'LANDLORD_UPDATED',
-        'landlord_004',
-        'Northpoint Homes information was updated',
-        const Duration(days: 3),
-      ),
-      log(
-        6,
-        'LANDLORD_REACTIVATED',
-        'landlord_005',
-        'Cedar Lane Properties was reactivated',
-        const Duration(days: 5),
-      ),
-      log(
-        8,
-        'LANDLORD_ARCHIVED',
-        'landlord_011',
-        'Bluewater Suites was archived',
-        const Duration(days: 8),
-      ),
-    ];
   }
 }

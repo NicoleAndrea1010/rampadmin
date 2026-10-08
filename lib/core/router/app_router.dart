@@ -8,10 +8,12 @@ import 'package:go_router/go_router.dart';
 import '../../features/activity/admin_activity_screen.dart';
 import '../../features/auth/login_screen.dart';
 import '../../features/dashboard/dashboard_screen.dart';
+import '../../features/admin_modules/admin_module_screen.dart';
 import '../../features/landlords/landlord_details_screen.dart';
 import '../../features/landlords/landlord_form_screen.dart';
 import '../../features/landlords/landlord_list_screen.dart';
 import '../../features/settings/settings_screen.dart';
+import '../../features/settings/profile_screen.dart';
 import '../../features/not_found_screen.dart';
 import '../../features/operations/operational_data_screen.dart';
 import '../../providers/auth_providers.dart';
@@ -31,7 +33,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       final signedIn = FirebaseAuth.instance.currentUser != null;
       final atLogin = state.matchedLocation == AdminRoutes.login;
       if (!signedIn && !atLogin) return AdminRoutes.login;
-      if (signedIn && atLogin) return AdminRoutes.dashboard;
+      if (signedIn && atLogin && !ref.read(loginTransitionProvider)) {
+        return AdminRoutes.dashboard;
+      }
       return null;
     },
     routes: [
@@ -56,6 +60,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             path: AdminRoutes.operations,
             builder: (_, _) => const OperationalDataScreen(),
           ),
+          ...adminModuleRoutes.entries.map(
+            (entry) => GoRoute(
+              path: entry.value,
+              builder: (_, _) => entry.key == AdminModule.auditLogs
+                  ? const AdminActivityScreen()
+                  : AdminModuleScreen(module: entry.key),
+            ),
+          ),
           GoRoute(
             path: AdminRoutes.landlordNew,
             builder: (_, _) => const LandlordFormScreen(),
@@ -78,6 +90,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: AdminRoutes.settings,
             builder: (_, _) => const SettingsScreen(),
+          ),
+          GoRoute(
+            path: AdminRoutes.profile,
+            builder: (_, _) => const ProfileScreen(),
           ),
         ],
       ),

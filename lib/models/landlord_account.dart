@@ -1,6 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-enum LandlordStatus { invited, active, suspended, archived }
+enum LandlordStatus { invited, active, suspended, archived, unknown }
 
 class LandlordAccount {
   const LandlordAccount({
@@ -16,6 +16,8 @@ class LandlordAccount {
     this.monthlyRevenue = const {},
     this.openTicketCount = 0,
     this.metricsAvailable = true,
+    this.paymentMetricsAvailable = true,
+    this.rawStatus,
     required this.createdAt,
     required this.updatedAt,
     required this.createdBy,
@@ -47,6 +49,15 @@ class LandlordAccount {
   final Map<String, double> monthlyRevenue;
   final int openTicketCount;
   final bool metricsAvailable;
+  final bool paymentMetricsAvailable;
+  final String? rawStatus;
+
+  String get statusLabel => switch (status) {
+    LandlordStatus.invited => 'Pending activation',
+    LandlordStatus.unknown =>
+      'Unknown / ${rawStatus?.isNotEmpty == true ? rawStatus : 'missing'}',
+    _ => status.name,
+  };
   final DateTime createdAt;
   final DateTime updatedAt;
   final String createdBy;
@@ -71,21 +82,28 @@ class LandlordAccount {
       throw StateError('Landlord ${document.id} has no data.');
     }
 
+    final rawStatus = data['status'] as String?;
+    final status = LandlordStatus.values
+        .where(
+          (value) =>
+              value != LandlordStatus.unknown &&
+              value.name.toLowerCase() == rawStatus?.trim().toLowerCase(),
+        )
+        .firstOrNull;
     return LandlordAccount(
       uid: document.id,
       email: data['email'] as String? ?? '',
       displayName: data['displayName'] as String? ?? '',
       companyName: data['companyName'] as String? ?? '',
       phone: data['phone'] as String? ?? '',
-      status: LandlordStatus.values.firstWhere(
-        (value) => value.name == data['status'],
-        orElse: () => LandlordStatus.invited,
-      ),
+      status: status ?? LandlordStatus.unknown,
+      rawStatus: status == null ? rawStatus : null,
       unitCount: (data['unitCount'] as num?)?.toInt() ?? 0,
       tenantCount: (data['tenantCount'] as num?)?.toInt() ?? 0,
       paidThisMonth: (data['paidThisMonth'] as num?)?.toDouble() ?? 0,
       openTicketCount: (data['openTicketCount'] as num?)?.toInt() ?? 0,
       metricsAvailable: true,
+      paymentMetricsAvailable: false,
       createdAt:
           (data['createdAt'] as Timestamp?)?.toDate() ??
           DateTime.fromMillisecondsSinceEpoch(0),
@@ -128,7 +146,9 @@ class LandlordAccount {
       'displayName': displayName,
       'companyName': companyName,
       'phone': phone,
-      'status': status.name,
+      'status': status == LandlordStatus.unknown
+          ? rawStatus ?? 'unknown'
+          : status.name,
       'unitCount': unitCount,
       'tenantCount': tenantCount,
       'paidThisMonth': paidThisMonth,
@@ -150,6 +170,7 @@ class LandlordAccount {
   }
 
   LandlordAccount copyWith({
+    String? uid,
     String? email,
     String? displayName,
     String? companyName,
@@ -160,6 +181,8 @@ class LandlordAccount {
     double? paidThisMonth,
     int? openTicketCount,
     bool? metricsAvailable,
+    bool? paymentMetricsAvailable,
+    String? rawStatus,
     DateTime? updatedAt,
     String? updatedBy,
     String? suspensionReason,
@@ -171,7 +194,7 @@ class LandlordAccount {
     List<String>? assignedEmployeeEmails,
     List<String>? permissions,
   }) => LandlordAccount(
-    uid: uid,
+    uid: uid ?? this.uid,
     email: email ?? this.email,
     displayName: displayName ?? this.displayName,
     companyName: companyName ?? this.companyName,
@@ -183,6 +206,9 @@ class LandlordAccount {
     monthlyRevenue: monthlyRevenue ?? this.monthlyRevenue,
     openTicketCount: openTicketCount ?? this.openTicketCount,
     metricsAvailable: metricsAvailable ?? this.metricsAvailable,
+    paymentMetricsAvailable:
+        paymentMetricsAvailable ?? this.paymentMetricsAvailable,
+    rawStatus: rawStatus ?? this.rawStatus,
     createdAt: createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
     createdBy: createdBy,

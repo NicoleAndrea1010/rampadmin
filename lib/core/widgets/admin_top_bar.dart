@@ -1,30 +1,28 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
-import '../../providers/auth_providers.dart';
-import '../../providers/landlord_providers.dart';
-import '../constants/admin_routes.dart';
 import '../theme/app_colors.dart';
-import 'ui_components.dart';
+import 'admin_account_menu.dart';
 
 final _tourTitleKey = GlobalKey();
-final _tourSearchKey = GlobalKey();
 final _tourHelpKey = GlobalKey();
 
-class AdminTopBar extends ConsumerWidget {
+class AdminTopBar extends StatelessWidget {
   const AdminTopBar({
     super.key,
     required this.title,
     required this.mobile,
     required this.onMenu,
+    this.onToggleSidebar,
+    this.sidebarCollapsed = false,
   });
   final String title;
   final bool mobile;
   final VoidCallback onMenu;
+  final VoidCallback? onToggleSidebar;
+  final bool sidebarCollapsed;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) => Container(
+  Widget build(BuildContext context) => Container(
     height: 76,
     padding: EdgeInsets.symmetric(horizontal: mobile ? 16 : 28),
     decoration: BoxDecoration(
@@ -38,6 +36,18 @@ class AdminTopBar extends ConsumerWidget {
             message: 'Open navigation',
             child: IconButton(onPressed: onMenu, icon: const Icon(Icons.menu)),
           ),
+        if (!mobile && onToggleSidebar != null)
+          Tooltip(
+            message: sidebarCollapsed
+                ? 'Expand navigation'
+                : 'Collapse navigation',
+            child: IconButton(
+              onPressed: onToggleSidebar,
+              icon: Icon(
+                sidebarCollapsed ? Icons.menu_open_rounded : Icons.menu_rounded,
+              ),
+            ),
+          ),
         if (mobile) const SizedBox(width: 4),
         Expanded(
           child: Text(
@@ -48,35 +58,7 @@ class AdminTopBar extends ConsumerWidget {
             style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
           ),
         ),
-        if (!mobile)
-          SizedBox(
-            width: 260,
-            height: 43,
-            child: TextField(
-              key: _tourSearchKey,
-              onSubmitted: (value) {
-                ref
-                    .read(landlordFiltersProvider.notifier)
-                    .set(LandlordFilters(query: value));
-                context.go(AdminRoutes.landlords);
-              },
-              decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.search, size: 20),
-                hintText: 'Search landlords',
-                contentPadding: EdgeInsets.zero,
-              ),
-            ),
-          )
-        else
-          Tooltip(
-            message: 'Search landlords',
-            child: IconButton(
-              key: _tourSearchKey,
-              onPressed: () => context.go(AdminRoutes.landlords),
-              icon: const Icon(Icons.search),
-            ),
-          ),
-        SizedBox(width: mobile ? 4 : 8),
+        SizedBox(width: mobile ? 2 : 8),
         Tooltip(
           message: 'Help & Page Guide',
           child: IconButton(
@@ -86,39 +68,19 @@ class AdminTopBar extends ConsumerWidget {
           ),
         ),
         SizedBox(width: mobile ? 4 : 8),
-        Badge(
-          smallSize: 8,
-          child: Tooltip(
-            message: 'Notifications',
-            child: IconButton(
-              onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('You have no new notifications.')),
+        Tooltip(
+          message: 'Notifications',
+          child: IconButton(
+            onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Notifications are not configured.'),
               ),
-              icon: const Icon(Icons.notifications_none),
             ),
+            icon: const Icon(Icons.notifications_none),
           ),
         ),
         SizedBox(width: mobile ? 4 : 8),
-        PopupMenuButton<String>(
-          tooltip: 'Administrator menu',
-          onSelected: (value) async {
-            if (value == 'settings') context.go(AdminRoutes.settings);
-            if (value == 'signout') {
-              await ref.read(adminAuthServiceProvider).signOut();
-            }
-          },
-          itemBuilder: (_) => const [
-            PopupMenuItem(value: 'settings', child: Text('Settings')),
-            PopupMenuItem(value: 'signout', child: Text('Sign out')),
-          ],
-          child: LandlordAvatar(
-            name:
-                ref.watch(currentAdminUserProvider)?.displayName ??
-                ref.watch(currentAdminUserProvider)?.email ??
-                'Administrator',
-            radius: 19,
-          ),
-        ),
+        const AdminProfileButton(),
       ],
     ),
   );
@@ -129,12 +91,7 @@ class AdminTopBar extends ConsumerWidget {
         _TourStep(
           _tourTitleKey,
           'Dashboard overview',
-          'Start here for account totals, portfolio activity, and monthly paid revenue.',
-        ),
-        _TourStep(
-          _tourSearchKey,
-          'Find a landlord',
-          'Search landlords by name, company, or email. Selecting search opens the landlord directory.',
+          'Review portfolio totals, payments, maintenance, and items requiring attention.',
         ),
         _TourStep(
           _tourHelpKey,
@@ -149,17 +106,12 @@ class AdminTopBar extends ConsumerWidget {
           'Open a landlord to review their profile, linked units, tenants, payment history, and activity.',
         ),
         _TourStep(
-          _tourSearchKey,
-          'Search landlords',
-          'Search by name, company, or email. Use the directory filters to narrow status or change sorting.',
-        ),
-        _TourStep(
           _tourHelpKey,
           'Manage accounts',
           'Use Add landlord or a row action to create, edit, activate, suspend, reset access, or archive an account.',
         ),
       ],
-      'RAMP Data' => [
+      'Raw Data Inspector' => [
         _TourStep(
           _tourTitleKey,
           'Operational records',
@@ -176,7 +128,7 @@ class AdminTopBar extends ConsumerWidget {
           'Select a record to see its saved fields. This monitor does not edit payment or tenant source records.',
         ),
       ],
-      'Admin Activity' => [
+      'Audit & Activity' => [
         _TourStep(
           _tourTitleKey,
           'Audit history',
@@ -191,6 +143,42 @@ class AdminTopBar extends ConsumerWidget {
           _tourTitleKey,
           'Review details',
           'Use the description and reason fields to understand each account action.',
+        ),
+      ],
+      'Data Health' => [
+        _TourStep(
+          _tourTitleKey,
+          'Data Health',
+          'Review ownership and relationship warnings. Diagnostics are read-only.',
+        ),
+        _TourStep(
+          _tourHelpKey,
+          'Review an issue',
+          'Use the record ID and suggested action to investigate the source data.',
+        ),
+      ],
+      'System Health' => [
+        _TourStep(
+          _tourTitleKey,
+          'System Health',
+          'Review configured services and the latest operational data load.',
+        ),
+        _TourStep(
+          _tourHelpKey,
+          'Developer tools',
+          'Advanced read-only diagnostics, including Raw Data Inspector, are available below.',
+        ),
+      ],
+      'Properties' || 'Tenants' || 'Payments & Billing' || 'Maintenance' => [
+        _TourStep(
+          _tourTitleKey,
+          title,
+          'Search and filter current operational records, then open a row for its saved details.',
+        ),
+        _TourStep(
+          _tourHelpKey,
+          'Page guide',
+          'Use page-specific search and filters to narrow the records shown.',
         ),
       ],
       'Settings' => [
@@ -210,21 +198,23 @@ class AdminTopBar extends ConsumerWidget {
           'Never share account credentials. Sensitive landlord operations are authorized and rate-limited server-side.',
         ),
       ],
+      'Profile' => [
+        _TourStep(
+          _tourTitleKey,
+          'Administrator profile',
+          'Review the authenticated account details and current session.',
+        ),
+      ],
       _ => [
         _TourStep(
           _tourTitleKey,
-          'Landlord profile',
-          'Review profile information, account status, linked portfolio records, and payments.',
+          'Administrator page',
+          'Review the information and available actions on this page.',
         ),
         _TourStep(
           _tourHelpKey,
-          'Account actions',
-          'Edit profile details or use account actions. Status changes and archiving require confirmation.',
-        ),
-        _TourStep(
-          _tourTitleKey,
-          'Portfolio tabs',
-          'Units, incoming tenants, maintenance, and payments show saved records linked to this landlord.',
+          'Page guide',
+          'Use this guide to learn how to work with the current page.',
         ),
       ],
     };

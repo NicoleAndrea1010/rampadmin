@@ -2,9 +2,12 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../core/services/firebase_functions_service.dart';
+import '../../core/services/supabase_service.dart';
 import '../../models/landlord_account.dart';
+import '../operations/operational_data_repository.dart';
 
 abstract final class LandlordPaymentMetrics {
   static Map<String, double> sixMonthPaidRevenue(
@@ -17,16 +20,18 @@ abstract final class LandlordPaymentMetrics {
       revenue[monthKey(month)] = 0;
     }
     for (final payment in payments) {
-      if ((payment['status'] as String? ?? '').toLowerCase() != 'paid') {
+      if ((payment['transactionType'] as String? ?? '').trim().toLowerCase() !=
+          'rent') {
+        continue;
+      }
+      if ((payment['status'] as String? ?? '').trim().toLowerCase() != 'paid') {
         continue;
       }
       final paidAt = _paymentDate(payment);
-      if (paidAt == null || paidAt.isAfter(now)) continue;
-      final amount =
-          (payment['amount'] as num?)?.toDouble() ??
-          (payment['baseRent'] as num?)?.toDouble() ??
-          (payment['total_amount'] as num?)?.toDouble();
-      if (amount == null || !amount.isFinite || amount < 0) continue;
+      if (paidAt == null) return const {};
+      if (paidAt.isAfter(now)) continue;
+      final amount = (payment['amount'] as num?)?.toDouble();
+      if (amount == null || !amount.isFinite || amount < 0) return const {};
       final key = monthKey(paidAt);
       if (revenue.containsKey(key)) revenue[key] = revenue[key]! + amount;
     }
@@ -39,9 +44,7 @@ abstract final class LandlordPaymentMetrics {
         data['paid_at'] ??
         data['paymentDate'] ??
         data['payment_date'] ??
-        data['date'] ??
-        data['timestamp'] ??
-        data['createdAt'];
+        data['date'];
     return switch (value) {
       Timestamp timestamp => timestamp.toDate(),
       DateTime date => date,
@@ -70,12 +73,16 @@ class FirestoreLandlordRepository implements LandlordRepository {
   FirestoreLandlordRepository({
     FirebaseFirestore? firestore,
     FirebaseFunctionsService? functions,
+    SupabaseService? operationalDataService,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _functions =
-           functions ?? FirebaseFunctionsService(FirebaseFunctions.instance);
+           functions ?? FirebaseFunctionsService(FirebaseFunctions.instance),
+       _supabase = operationalDataService;
 
   final FirebaseFirestore _firestore;
   final FirebaseFunctionsService _functions;
+  SupabaseService? _supabase;
+  SupabaseService get _operationalData => _supabase ??= SupabaseService();
 
   @override
   Future<List<LandlordAccount>> getLandlords() async {
@@ -84,19 +91,26 @@ class FirestoreLandlordRepository implements LandlordRepository {
         .get()
         .timeout(const Duration(seconds: 15));
     final landlords = snapshot.docs.map(LandlordAccount.fromFirestore).toList();
+    const collections = ['units', 'tenants', 'payments', 'maintenanceTickets'];
     final operational = await Future.wait(
-      const ['units', 'tenants', 'payments', 'maintenanceTickets'].map(
-        (collection) => _firestore
-            .collection(collection)
-            .get()
-            .timeout(const Duration(seconds: 15)),
-      ),
+      collections.map(_operationalData.loadTable),
     );
     final recordsByCollection = {
       for (var index = 0; index < operational.length; index++)
-        const ['units', 'tenants', 'payments', 'maintenanceTickets'][index]:
-            operational[index].docs,
+        collections[index]: operational[index],
     };
+    for (final records in recordsByCollection.values) {
+      for (final record in records) {
+        final owners = operationalOwnerIds(record);
+        if (owners.length > 1) {
+          debugPrint(
+            'Data-integrity issue: operational record has conflicting '
+            'landlordId values: '
+            '${owners.join(', ')}',
+          );
+        }
+      }
+    }
     return landlords
         .map(
           (landlord) => _enrichWithLiveMetrics(landlord, recordsByCollection),
@@ -114,18 +128,18 @@ class FirestoreLandlordRepository implements LandlordRepository {
 
   LandlordAccount _enrichWithLiveMetrics(
     LandlordAccount landlord,
-    Map<String, List<QueryDocumentSnapshot<Map<String, dynamic>>>>
-    recordsByCollection,
+    Map<String, List<Map<String, dynamic>>> recordsByCollection,
   ) {
     final owned = {
       for (final collection in recordsByCollection.entries)
-        collection.key: collection.value
-            .where((record) => _ownerId(record.data()) == landlord.uid)
-            .toList(),
+        collection.key: collection.value.where((record) {
+          final owners = _ownerIds(record);
+          return owners.length == 1 && owners.single == landlord.uid;
+        }).toList(),
     };
     final now = DateTime.now();
     final monthlyRevenue = LandlordPaymentMetrics.sixMonthPaidRevenue(
-      (owned['payments'] ?? []).map((payment) => payment.data()),
+      owned['payments'] ?? [],
       now,
     );
     final paidThisMonth =
@@ -134,10 +148,17 @@ class FirestoreLandlordRepository implements LandlordRepository {
         )] ??
         0;
     final openTickets = (owned['maintenanceTickets'] ?? []).where((ticket) {
-      final status = (ticket.data()['status'] as String? ?? '').toLowerCase();
-      return status != 'completed' &&
-          status != 'resolved' &&
-          status != 'closed';
+      final status = (ticket['status'] as String? ?? '')
+          .replaceAll('_', ' ')
+          .replaceAll('-', ' ')
+          .trim()
+          .toLowerCase();
+      return const {
+        'pending',
+        'schedule visit',
+        'estimate',
+        'schedule repair',
+      }.contains(status);
     }).length;
 
     return landlord.copyWith(
@@ -145,124 +166,95 @@ class FirestoreLandlordRepository implements LandlordRepository {
       tenantCount: (owned['tenants'] ?? []).length,
       paidThisMonth: paidThisMonth,
       monthlyRevenue: monthlyRevenue,
+      paymentMetricsAvailable: monthlyRevenue.isNotEmpty,
       openTicketCount: openTickets,
     );
   }
 
-  String _ownerId(Map<String, dynamic> data) {
-    final current = data['landlordId'];
-    final legacy = data['landlord_id'];
-    if (current is String && current.isNotEmpty) {
-      if (legacy is String && legacy.isNotEmpty && legacy != current) {
-        return '';
-      }
-      return current;
-    }
-    return legacy is String ? legacy : '';
-  }
+  List<String> _ownerIds(Map<String, dynamic> data) =>
+      operationalOwnerIds(data);
 
   @override
   Future<LandlordAccount> createLandlord(LandlordAccount landlord) async {
-    String uid = landlord.uid;
-    try {
-      final response = await _functions.call('createLandlord', {
-        'email': landlord.email,
-        'displayName': landlord.displayName,
-        'companyName': landlord.companyName,
-        'phone': landlord.phone,
-      });
-      if (response['uid'] is String && (response['uid'] as String).isNotEmpty) {
-        uid = response['uid'];
-      }
-    } catch (_) {}
+    final response = await _functions.call('createLandlord', {
+      'email': landlord.email,
+      'displayName': landlord.displayName,
+      'companyName': landlord.companyName,
+      'phone': landlord.phone,
+    });
+    final uid = response['uid'];
+    if (uid is! String || uid.isEmpty) {
+      throw StateError('The server did not return the created landlord ID.');
+    }
 
     final createdAccount = landlord.copyWith(
       uid: uid,
+      status: LandlordStatus.invited,
       updatedAt: DateTime.now(),
     );
-    await _firestore
-        .collection('landlords')
-        .doc(uid)
-        .set(createdAccount.toMap(), SetOptions(merge: true));
+    await _firestore.collection('landlords').doc(uid).set({
+      'canManageAllUnits': createdAccount.canManageAllUnits,
+      'assignedUnitIds': createdAccount.assignedUnitIds,
+      'assignedEmployeeEmails': createdAccount.assignedEmployeeEmails,
+      'permissions': createdAccount.permissions,
+    }, SetOptions(merge: true));
 
-    return createdAccount;
+    final snapshot = await _firestore.collection('landlords').doc(uid).get();
+    if (!snapshot.exists) {
+      throw StateError('The server-created landlord profile was not found.');
+    }
+    return LandlordAccount.fromFirestore(snapshot);
   }
 
   @override
   Future<void> updateLandlord(LandlordAccount landlord) async {
-    await _firestore
-        .collection('landlords')
-        .doc(landlord.uid)
-        .set(landlord.toMap(), SetOptions(merge: true));
-
-    try {
-      await _functions.call('updateLandlord', {
-        'uid': landlord.uid,
-        'displayName': landlord.displayName,
-        'companyName': landlord.companyName,
-        'phone': landlord.phone,
-      });
-    } catch (_) {}
+    await _functions.call('updateLandlord', {
+      'uid': landlord.uid,
+      'displayName': landlord.displayName,
+      'companyName': landlord.companyName,
+      'phone': landlord.phone,
+    });
+    await _firestore.collection('landlords').doc(landlord.uid).update({
+      'canManageAllUnits': landlord.canManageAllUnits,
+      'assignedUnitIds': landlord.assignedUnitIds,
+      'assignedEmployeeEmails': landlord.assignedEmployeeEmails,
+      'permissions': landlord.permissions,
+    });
   }
 
   @override
   Future<void> activateLandlord(String uid) async {
-    await _firestore.collection('landlords').doc(uid).set(
-      {'status': LandlordStatus.active.name},
-      SetOptions(merge: true),
-    );
-    try {
-      await _functions.call('activateLandlord', {'uid': uid});
-    } catch (_) {}
+    await _functions.call('activateLandlord', {'uid': uid});
   }
 
   @override
   Future<void> suspendLandlord(String uid, String reason) async {
-    await _firestore.collection('landlords').doc(uid).set({
-      'status': LandlordStatus.suspended.name,
-      'suspensionReason': reason.trim(),
-      'suspendedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
-    try {
-      await _functions.call('suspendLandlord', {
-        'uid': uid,
-        'reason': reason.trim(),
-      });
-    } catch (_) {}
+    await _functions.call('suspendLandlord', {
+      'uid': uid,
+      'reason': reason.trim(),
+    });
   }
 
   @override
   Future<void> reactivateLandlord(String uid) async {
-    await _firestore.collection('landlords').doc(uid).set(
-      {'status': LandlordStatus.active.name},
-      SetOptions(merge: true),
-    );
-    try {
-      await _functions.call('reactivateLandlord', {'uid': uid});
-    } catch (_) {}
+    await _functions.call('reactivateLandlord', {'uid': uid});
   }
 
   @override
   Future<void> archiveLandlord(String uid) async {
-    await _firestore.collection('landlords').doc(uid).set({
-      'status': LandlordStatus.archived.name,
-      'archivedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
-    try {
-      await _functions.call('archiveLandlord', {'uid': uid});
-    } catch (_) {}
+    await _functions.call('archiveLandlord', {'uid': uid});
   }
 
   @override
   Future<void> sendPasswordReset(String uid) async {
-    try {
-      await _functions.call('sendLandlordPasswordReset', {'uid': uid});
-    } catch (_) {}
+    await _functions.call('sendLandlordPasswordReset', {'uid': uid});
   }
 }
 
 class MockLandlordRepository implements LandlordRepository {
-  MockLandlordRepository() : _items = _seedData();
+  MockLandlordRepository([List<LandlordAccount>? initialItems])
+    : _items = List.from(initialItems ?? const []);
+
   final List<LandlordAccount> _items;
 
   @override
@@ -287,7 +279,7 @@ class MockLandlordRepository implements LandlordRepository {
     }
     final created = landlord.copyWith(
       updatedAt: DateTime.now(),
-      updatedBy: 'Nicole',
+      updatedBy: 'test',
     );
     _items.insert(0, created);
     return created;
@@ -300,7 +292,7 @@ class MockLandlordRepository implements LandlordRepository {
     if (index < 0) throw StateError('not-found');
     _items[index] = landlord.copyWith(
       updatedAt: DateTime.now(),
-      updatedBy: 'Nicole',
+      updatedBy: 'test',
     );
   }
 
@@ -350,183 +342,5 @@ class MockLandlordRepository implements LandlordRepository {
   @override
   Future<void> sendPasswordReset(String uid) async {
     if (await getLandlord(uid) == null) throw StateError('not-found');
-  }
-
-  static List<LandlordAccount> _seedData() {
-    final now = DateTime.now();
-    LandlordAccount item(
-      int number,
-      String name,
-      String company,
-      LandlordStatus status,
-      int used,
-      int tenants,
-      double paid,
-      int tickets,
-      int age,
-    ) => LandlordAccount(
-      uid: 'landlord_${number.toString().padLeft(3, '0')}',
-      email:
-          'admin${number.toString().padLeft(2, '0')}@${company.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '')}.example',
-      displayName: name,
-      companyName: company,
-      phone: '09${(1700000000 + number * 7919).toString().substring(0, 9)}',
-      status: status,
-      unitCount: used,
-      tenantCount: tenants,
-      paidThisMonth: paid,
-      openTicketCount: tickets,
-      createdAt: now.subtract(Duration(days: age)),
-      updatedAt: now.subtract(Duration(days: number % 5)),
-      lastSignInAt: status == LandlordStatus.invited
-          ? null
-          : now.subtract(Duration(hours: number * 7)),
-      createdBy: 'Nicole',
-      updatedBy: 'Nicole',
-      suspensionReason: status == LandlordStatus.suspended
-          ? 'Account compliance review'
-          : null,
-      suspendedAt: status == LandlordStatus.suspended
-          ? now.subtract(Duration(days: number))
-          : null,
-      archivedAt: status == LandlordStatus.archived
-          ? now.subtract(Duration(days: number))
-          : null,
-    );
-
-    return [
-      item(
-        1,
-        'Alyssa Mendoza',
-        'QA Alpha Rentals',
-        LandlordStatus.active,
-        18,
-        15,
-        72500,
-        3,
-        8,
-      ),
-      item(
-        2,
-        'Marco Villanueva',
-        'Sunrise Apartments',
-        LandlordStatus.active,
-        43,
-        36,
-        168400,
-        2,
-        22,
-      ),
-      item(
-        3,
-        'Bianca Santos',
-        'Riverstone Leasing',
-        LandlordStatus.active,
-        8,
-        6,
-        38500,
-        1,
-        39,
-      ),
-      item(
-        4,
-        'Paolo Reyes',
-        'Northpoint Homes',
-        LandlordStatus.active,
-        23,
-        19,
-        91600,
-        4,
-        51,
-      ),
-      item(
-        5,
-        'Camille Navarro',
-        'Cedar Lane Properties',
-        LandlordStatus.active,
-        6,
-        5,
-        28400,
-        0,
-        68,
-      ),
-      item(
-        6,
-        'Joaquin Lim',
-        'Harborview Residences',
-        LandlordStatus.active,
-        47,
-        41,
-        193000,
-        2,
-        86,
-      ),
-      item(
-        7,
-        'Sofia Castillo',
-        'Magnolia Property Group',
-        LandlordStatus.invited,
-        0,
-        0,
-        0,
-        0,
-        3,
-      ),
-      item(
-        8,
-        'Nathan Garcia',
-        'Greenfield Spaces',
-        LandlordStatus.invited,
-        0,
-        0,
-        0,
-        0,
-        6,
-      ),
-      item(
-        9,
-        'Isabel Aquino',
-        'Maple Residences',
-        LandlordStatus.suspended,
-        20,
-        17,
-        0,
-        5,
-        105,
-      ),
-      item(
-        10,
-        'Luis Fernandez',
-        'Parkside Rental Co.',
-        LandlordStatus.suspended,
-        9,
-        7,
-        0,
-        2,
-        132,
-      ),
-      item(
-        11,
-        'Patricia Ong',
-        'Bluewater Suites',
-        LandlordStatus.archived,
-        31,
-        25,
-        0,
-        0,
-        190,
-      ),
-      item(
-        12,
-        'Gabriel Torres',
-        'Westbridge Living',
-        LandlordStatus.archived,
-        7,
-        5,
-        0,
-        0,
-        240,
-      ),
-    ];
   }
 }
