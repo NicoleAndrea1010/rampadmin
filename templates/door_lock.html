@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Door status · {{ unit.unit_number or unit.name or 'Unit' }}{% endblock %}
+{% block breadcrumb %}<a href="{{ url_for('records_page', section='properties') }}">Units</a> <span class="crumb-separator">/</span> <strong>Door status</strong>{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <h1>Door status</h1>
+    <p class="page-subtitle">{{ unit.unit_number or 'Unit' }}{% if unit.name %} · {{ unit.name }}{% endif %}{% if unit.location %} · {{ unit.location }}{% endif %}</p>
+  </div>
+  <a class="button button-secondary" href="{{ url_for('record_detail', section='properties', record_id=unit.id) }}">Back to unit</a>
+</div>
+
+<section class="panel lock-control-panel">
+  <div class="lock-control-heading">
+    <span class="lock-control-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" focusable="false">
+        <rect x="4" y="10" width="16" height="11" rx="2"></rect>
+        <path d="M8 10V7a4 4 0 0 1 8 0v3"></path>
+        <path d="M12 14v3"></path>
+      </svg>
+    </span>
+    <div>
+      <h2>Controls unavailable</h2>
+      <p>No door command was sent.</p>
+    </div>
+  </div>
+  <div class="lock-control-notice" role="note">
+    <strong>This page will not guess the lock state or bypass the approved device functions.</strong>
+    <p>A verified request and status contract for the existing door-device functions is not available in this web project. Unlock, close, and command-status controls remain disabled until that contract is confirmed.</p>
+  </div>
+  <a class="button button-secondary" href="{{ url_for('records_page', section='activity') }}">View audit history</a>
+</section>
+{% endblock %}

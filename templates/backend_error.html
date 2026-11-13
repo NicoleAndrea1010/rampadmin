@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Service unavailable · RAMP Admin</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="error-page">
+  <main class="panel error-card">
+    <span class="placeholder-icon">!</span>
+    <p class="eyebrow">BACKEND CONNECTION</p>
+    <h1>We couldn't load this page</h1>
+    <p>{{ message }}</p>
+    <a class="button button-secondary" href="{{ url_for('dashboard') }}">Try again</a>
+  </main>
+</body>
+</html>

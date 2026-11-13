@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}{{ record_label }} · {{ section_title }}{% endblock %}
+{% block breadcrumb %}<a href="{{ url_for('records_page', section=section) }}">{{ section_title }}</a> <span class="crumb-separator">/</span> <strong>Record details</strong>{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <h1>{{ record_label }}</h1>
+    <p class="page-subtitle">{{ section_title }}{% if record.id %} · Record {{ record.id }}{% endif %}</p>
+  </div>
+  <div class="heading-actions">
+    {% if section == 'properties' and supabase_connected %}
+    <a class="button button-secondary" href="{{ url_for('unit_door_lock', record_id=record.id) }}">Door status</a>
+    {% endif %}
+    {% if edit_url %}
+    <a class="button button-primary" href="{{ edit_url }}">Edit record</a>
+    {% endif %}
+    <a class="button button-secondary" href="{{ url_for('records_page', section=section) }}">Back to {{ section_title|lower }}</a>
+  </div>
+</div>
+
+<div class="detail-layout">
+  <div class="detail-main">
+    {% if section == 'documents' %}
+    <section class="panel detail-panel"><p class="page-subtitle">File opening is disabled until a private Supabase Storage access path is verified. This page displays metadata only.</p></section>
+    {% endif %}
+    {% for group in detail_groups %}
+    <section class="panel detail-panel {% if group.title == 'Private details' %}private-detail-panel{% endif %}">
+      <div class="panel-header"><h2>{{ group.title }}</h2></div>
+      {% if group.title == 'Private details' %}
+      <p class="private-detail-note">Restricted tenant information. Handle and share only when necessary.</p>
+      {% endif %}
+      <dl class="detail-grid">
+        {% for field in group.fields %}
+        <div class="detail-field">
+          <dt>{{ field.label }}</dt>
+          <dd>{{ field.value }}</dd>
+        </div>
+        {% endfor %}
+      </dl>
+    </section>
+    {% endfor %}
+
+    {% if can_review %}
+    <section class="panel detail-panel inquiry-review-panel">
+      <div class="panel-header">
+        <div><h2>Review inquiry</h2><p>Decisions are recorded by the existing Supabase review workflow.</p></div>
+      </div>
+      <form method="post" action="{{ url_for('review_inquiry', record_id=record.id) }}" data-requires-online="true" data-confirm="Submit a decision for this inquiry?" data-loading-label="Submitting review…">
+        <label class="form-field">
+          <span>Assign unit</span>
+          <select name="assigned_unit_id">
+            <option value="">No unit assigned</option>
+            {% for unit in review_units %}
+            <option value="{{ unit.id }}" {% if record.assigned_unit_id|string == unit.id|string %}selected{% endif %}>
+              {{ unit.unit_number or unit.name or unit.title or unit.id }} · {{ unit.status or 'Status unavailable' }}
+            </option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="form-field">
+          <span>Internal note</span>
+          <textarea name="internal_note" maxlength="2000" rows="4">{{ record.internal_note or '' }}</textarea>
+        </label>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="form-actions inquiry-review-actions">
+          <button class="button button-secondary" type="submit" name="decision" value="decline">Decline inquiry</button>
+          <button class="button button-primary" type="submit" name="decision" value="approve">Approve inquiry</button>
+        </div>
+      </form>
+    </section>
+    {% endif %}
+  </div>
+
+  {% if related_groups %}
+  <aside class="detail-related">
+    {% for group in related_groups if group['items'] %}
+    <section class="panel detail-panel related-panel">
+      <div class="panel-header"><h2>{{ group.title }}</h2></div>
+      <ul class="related-list">
+      {% for item in group['items'] %}
+        <li>
+          {% if item.url %}
+          <a href="{{ item.url }}">{{ item.title }}</a>
+          {% else %}
+          <span>{{ item.title }}</span>
+          {% endif %}
+          {% if item.meta %}<small>{{ item.meta }}</small>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endfor %}
+  </aside>
+  {% endif %}
+</div>
+{% endblock %}

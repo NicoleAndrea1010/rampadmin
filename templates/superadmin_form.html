@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit superadmin' if account else 'Invite superadmin' }}{% endblock %}
+{% block breadcrumb %}<a href="{{ url_for('records_page', section='superadmins') }}">Superadmins</a> <span class="crumb-separator">/</span> <strong>{{ 'Edit profile' if account else 'Invite' }}</strong>{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div><h1>{{ 'Edit superadmin' if account else 'Invite a superadmin' }}</h1></div>
+</div>
+<section class="panel form-panel">
+  <form method="post" class="landlord-form" data-loading-label="{{ 'Saving…' if account else 'Sending invitation…' }}" data-confirm="{{ 'Save changes to this superadmin?' if account else '' }}" {% if account %}data-offline-queue="true"{% endif %}>
+    <div class="form-section-heading"><span class="form-section-icon">♧</span><span><strong>Account details</strong></span></div>
+    <div class="form-grid">
+      <label class="form-field"><span>Full name <b>*</b></span><input name="display_name" required minlength="2" maxlength="100" value="{{ account.display_name if account else '' }}"></label>
+      <label class="form-field"><span>Email address <b>*</b></span><input type="email" name="email" required maxlength="254" value="{{ account.email if account else '' }}" {% if account %}readonly{% endif %}></label>
+      {% if account %}<div class="form-field"><span>Account access</span><span class="form-status status-pill status-{{ account.status|lower }}">{{ account.status }}</span></div>{% endif %}
+    </div>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if account and account.updated_at %}<input type="hidden" name="updated_at" value="{{ account.updated_at }}">{% endif %}
+    <div class="form-note"><span>i</span><p>{% if account %}Email and access approval are managed separately.{% else %}The invitation is sent through Supabase. New superadmins require approval before they can sign in.{% endif %}</p></div>
+    <div class="form-actions"><a class="button button-secondary" href="{{ url_for('records_page', section='superadmins') }}">Cancel</a><button class="button button-primary" type="submit">{{ 'Save changes' if account else 'Send invitation' }} <span>→</span></button></div>
+  </form>
+</section>
+{% endblock %}

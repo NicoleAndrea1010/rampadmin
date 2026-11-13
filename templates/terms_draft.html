@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Terms &amp; Conditions draft{% endblock %}
+{% block breadcrumb %}<a href="{{ url_for('records_page', section='settings') }}">Settings</a> <span class="crumb-separator">/</span> <strong>Terms &amp; Conditions draft</strong>{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <h1>Terms &amp; Conditions draft</h1>
+    <p class="page-subtitle">For review before publication. This draft is not legal advice or a consent flow.</p>
+  </div>
+  <div class="heading-actions">
+    <a class="button button-secondary" href="{{ url_for('records_page', section='settings') }}">Back to Settings</a>
+  </div>
+</div>
+<section class="panel detail-panel terms-draft">
+  <p><strong>Draft status:</strong> Internal review only. Have qualified counsel adapt this document to the operating entity, applicable law, privacy notices, and the final mobile and web features before asking users to accept it.</p>
+
+  <h2>1. Scope and account access</h2>
+  <p>RAMP Admin is an administrative property-management workspace for authorized users. You must use an individually assigned account, keep your sign-in credentials private, and promptly report suspected unauthorized access. Access may be limited or disabled when required to protect the service or its users.</p>
+
+  <h2>2. Permitted use and information accuracy</h2>
+  <p>Use the workspace only for authorized property-management work. You are responsible for ensuring that information you enter is accurate, appropriate to share, and handled with any permissions or notices required by law. Do not use the workspace to access, disclose, or alter information outside your role.</p>
+
+  <h2>3. Records, changes, and audit history</h2>
+  <p>Actions may create or update records in connected RAMP systems. Some records are archived rather than permanently deleted so their history is retained. Review changes before saving and verify important actions after submission. Access and changes remain subject to the permissions configured for your account.</p>
+
+  <h2>4. Payments and third-party services</h2>
+  <p>This web workspace currently displays payment records but does not itself accept or process online payments. Any payment or proof-of-payment process in another RAMP app must be described in terms that match that app and its verified payment provider. Connected services, including Supabase, may process data to provide authentication, storage, and application functions under their own terms.</p>
+
+  <h2>5. Offline use and device security</h2>
+  <p>Some pages and pending edits may be stored in this browser to support offline work. Browser storage is device-local and is not encrypted by this website. Use only a trusted, access-controlled device, keep it protected, and reconnect to sync pending changes. Do not rely on an unsynced edit as a completed change.</p>
+
+  <h2>6. Availability and changes</h2>
+  <p>The workspace may be updated, interrupted, or unavailable. Maintain any independent records required for your work and report errors through the designated support channel. The service owner should publish a support contact, retention details, and any applicable service commitments before adopting this draft.</p>
+
+  <h2>7. Privacy and data handling</h2>
+  <p>Use and handling of personal information should be governed by a separate privacy notice that identifies the responsible organization, purposes, legal basis where applicable, retention, user rights, and contact details. This draft does not replace that notice or authorize collection beyond the purposes of the service.</p>
+
+  <h2>8. Governing terms and contact</h2>
+  <p>Before publication, specify the contracting organization, governing jurisdiction, effective date, amendment process, dispute contact, and any required consumer or employment terms. Do not present this internal draft as accepted or binding until those details and an appropriate acceptance process have been reviewed.</p>
+</section>
+{% endblock %}

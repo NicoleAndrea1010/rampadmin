@@ -1,0 +1,3173 @@
+from __future__ import annotations
+
+import csv
+import hashlib
+import hmac
+import io
+import json
+import math
+import os
+import re
+import secrets
+import sqlite3
+import time
+from contextlib import contextmanager
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Iterator
+from uuid import UUID, uuid4
+
+from flask import (
+    Flask,
+    abort,
+    flash,
+    g,
+    has_request_context,
+    jsonify,
+    make_response,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
+from werkzeug.exceptions import HTTPException
+
+import supabase_backend
+
+
+ROOT = Path(__file__).resolve().parent
+MIN_ENTRY_DATE = date(2025, 1, 1)
+AUTH_RATE_LIMIT_WINDOW_SECONDS = 15 * 60
+AUTH_RATE_LIMIT_MAX_ATTEMPTS = 5
+
+
+def _database_path() -> Path:
+    configured = os.environ.get("RAMP_WEB_DATABASE", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return ROOT / "instance" / "ramp_admin.sqlite3"
+
+
+DATABASE = _database_path()
+RECORDS_PAGE_SIZE = 50
+
+
+def _valid_email_address(value: str) -> bool:
+    return (
+        len(value) <= 254
+        and re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value) is not None
+    )
+
+
+app = Flask(__name__)
+_production = os.environ.get("RAMP_ENV", "").strip().casefold() == "production"
+_configured_secret = os.environ.get("RAMP_WEB_SECRET_KEY", "").strip()
+if _production and len(_configured_secret) < 32:
+    raise RuntimeError(
+        "Production requires RAMP_WEB_SECRET_KEY to be set to at least 32 characters."
+    )
+if _production:
+    try:
+        supabase_backend.settings()
+    except supabase_backend.SupabaseConfigurationError as error:
+        raise RuntimeError(
+            "Production requires valid Supabase environment configuration."
+        ) from error
+app.config["SECRET_KEY"] = _configured_secret or secrets.token_hex(32)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=_production or os.environ.get("RAMP_COOKIE_SECURE") == "1",
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
+)
+
+SECTIONS: dict[str, dict[str, Any]] = {
+    "landlords": {
+        "title": "Landlords",
+        "description": "Review landlord profiles, account status, and contact details.",
+        "table": "landlords",
+        "columns": [
+            ("name", "Landlord"),
+            ("company", "Company"),
+            ("email", "Email"),
+            ("phone", "Phone"),
+            ("units", "Properties"),
+            ("status", "Status"),
+        ],
+    },
+    "superadmins": {
+        "title": "Superadmins",
+        "description": "Manage administrator access and approvals.",
+        "table": "users",
+        "columns": [
+            ("display_name", "Name"),
+            ("email", "Email"),
+            ("role", "Role"),
+            ("status", "Access"),
+            ("must_change_password", "Password reset"),
+            ("created_at", "Created"),
+            ("last_login_at", "Last login"),
+        ],
+    },
+    "properties": {
+        "title": "Units",
+        "description": "Review unit availability, rent, and occupancy.",
+        "table": "properties",
+        "columns": [
+            ("unit_number", "Unit"),
+            ("name", "Property"),
+            ("location", "Location"),
+            ("property_type", "Type"),
+            ("landlord", "Landlord"),
+            ("tenant", "Tenant"),
+            ("rent", "Monthly rent"),
+            ("status", "Status"),
+        ],
+    },
+    "tenants": {
+        "title": "Tenants",
+        "description": "Find tenants and review their current property and lease details.",
+        "table": "tenants",
+        "columns": [
+            ("name", "Tenant"),
+            ("email", "Email"),
+            ("phone", "Phone"),
+            ("property", "Property"),
+            ("lease_start", "Lease starts"),
+            ("lease_end", "Lease ends"),
+            ("lease_status", "Lease status"),
+            ("monthly_rent", "Monthly rent"),
+            ("balance", "Balance"),
+            ("status", "Status"),
+        ],
+    },
+    "payments": {
+        "title": "Payments",
+        "description": "Track rent received, outstanding balances, and payment status.",
+        "table": "payments",
+        "columns": [
+            ("reference", "Reference"),
+            ("tenant", "Tenant"),
+            ("property", "Property"),
+            ("month", "Month"),
+            ("amount", "Amount"),
+            ("method", "Method"),
+            ("status", "Status"),
+            ("paid_on", "Date"),
+        ],
+    },
+    "maintenance": {
+        "title": "Maintenance",
+        "description": "Follow repair requests from first report through completion.",
+        "table": "maintenance",
+        "columns": [
+            ("title", "Request"),
+            ("property", "Property"),
+            ("tenant", "Tenant"),
+            ("priority", "Priority"),
+            ("status", "Stage"),
+            ("assigned_to_name", "Assigned to"),
+            ("sla_due_date", "SLA due"),
+            ("created", "Created"),
+        ],
+    },
+    "inquiries": {
+        "title": "Tenant inquiries",
+        "description": "Keep track of prospective renters and property questions.",
+        "table": "inquiries",
+        "columns": [
+            ("sender", "From"),
+            ("email", "Email"),
+            ("phone", "Phone"),
+            ("property", "Property"),
+            ("message", "Inquiry"),
+            ("received", "Received"),
+            ("status", "Status"),
+        ],
+    },
+    "expenses": {
+        "title": "Expenses",
+        "description": "Review operating expenses by period, category, and unit.",
+        "table": "expenses",
+        "columns": [
+            ("title", "Expense"),
+            ("category", "Category"),
+            ("amount", "Amount"),
+            ("date", "Date"),
+            ("unit", "Unit"),
+            ("recorded_by", "Recorded by"),
+        ],
+    },
+    "public-listings": {
+        "title": "Public listings",
+        "description": "Read-only listing records. They are not assumed to sync with units.",
+        "table": "public_listings",
+        "columns": [
+            ("title", "Listing"),
+            ("unit_number", "Unit"),
+            ("location", "Location"),
+            ("property_type", "Type"),
+            ("rent", "Rent"),
+            ("updated_at", "Updated"),
+        ],
+    },
+    "documents": {
+        "title": "Tenant documents",
+        "description": "Review document metadata. File opening is disabled until private access is verified.",
+        "table": "tenant_documents",
+        "columns": [
+            ("tenant", "Tenant"),
+            ("title", "Document"),
+            ("type", "Type"),
+            ("file_name", "File"),
+            ("file_size", "Size"),
+            ("uploaded_at", "Uploaded"),
+        ],
+    },
+    "announcements": {
+        "title": "Announcements",
+        "description": "Manage published messages and preserve archived announcements.",
+        "table": "announcements",
+        "columns": [
+            ("title", "Announcement"),
+            ("category", "Category"),
+            ("author", "Author"),
+            ("timestamp", "Published"),
+            ("importance", "Important"),
+            ("status", "Status"),
+        ],
+    },
+    "notifications": {
+        "title": "Notifications",
+        "description": "Review notification state and resolve referenced records when possible.",
+        "table": "notifications",
+        "columns": [
+            ("title", "Notification"),
+            ("type", "Type"),
+            ("status", "State"),
+            ("timestamp", "Date"),
+            ("entity_type", "Related type"),
+            ("action", "Action"),
+        ],
+    },
+    "events": {
+        "title": "Events / calendar",
+        "description": "Review scheduled events and their completion state.",
+        "table": "events",
+        "columns": [
+            ("title", "Event"),
+            ("date", "Date"),
+            ("type", "Type"),
+            ("priority", "Priority"),
+            ("status", "State"),
+            ("location", "Location"),
+        ],
+    },
+    "rfid-access": {
+        "title": "RFID access history",
+        "description": "Read-only access events. Card identifiers are intentionally excluded.",
+        "table": "rfid_access_logs",
+        "columns": [
+            ("created", "Time"),
+            ("device", "Device"),
+            ("unit", "Unit"),
+            ("tenant", "Tenant"),
+            ("action", "Action"),
+            ("access_status", "Result"),
+        ],
+    },
+    "utility-history": {
+        "title": "Utility rate history",
+        "description": "Read-only history of utility rate changes.",
+        "table": "utility_rate_logs",
+        "columns": [
+            ("utility", "Utility"),
+            ("previous_rate", "Previous rate"),
+            ("new_rate", "New rate"),
+            ("effective_at", "Effective"),
+            ("note", "Note"),
+        ],
+    },
+    "settings": {
+        "title": "Settings",
+        "description": "Review and update the existing global settings records.",
+        "table": "settings",
+        "columns": [
+            ("default_due_day", "Due day"),
+            ("default_late_fee", "Default late fee"),
+            ("water_rate", "Water rate"),
+            ("electricity_rate", "Electricity rate"),
+            ("auto_late_fee_enabled", "Auto late fee"),
+            ("auto_backup_enabled", "Auto backup"),
+            ("updated_at", "Updated"),
+        ],
+    },
+    "activity": {
+        "title": "Audit history",
+        "description": "Review recorded administrative activity. History is read-only.",
+        "table": "activity",
+        "columns": [
+            ("actor", "Administrator"),
+            ("action", "Action"),
+            ("target", "Record"),
+            ("occurred", "Date"),
+        ],
+    },
+}
+
+NAV_ITEMS = [
+    ("Overview", "Dashboard", "⌂", "dashboard"),
+    ("Portfolio", "Units", "⌂", "properties"),
+    ("Portfolio", "Public listings", "▧", "public-listings"),
+    ("People", "Landlords", "▤", "landlords"),
+    ("People", "Tenants", "♙", "tenants"),
+    ("People", "Accounts & access", "♧", "superadmins"),
+    ("Operations", "Payments", "₱", "payments"),
+    ("Operations", "Maintenance", "⚒", "maintenance"),
+    ("Operations", "Tenant inquiries", "✉", "inquiries"),
+    ("Operations", "Expenses", "−", "expenses"),
+    ("Operations", "Documents", "▧", "documents"),
+    ("Operations", "Announcements", "▤", "announcements"),
+    ("Operations", "Notifications", "◉", "notifications"),
+    ("Operations", "Events / calendar", "◷", "events"),
+    ("Building systems", "RFID access history", "⌁", "rfid-access"),
+    ("System", "Audit history", "◷", "activity"),
+    ("System", "Utility rate history", "≈", "utility-history"),
+    ("System", "Settings", "⚙", "settings"),
+]
+
+ENTITY_TABLES = {
+    "properties": "units",
+    "tenants": "tenants",
+    "expenses": "expenses",
+    "announcements": "announcements",
+}
+
+ENTITY_FIELDS = {
+    "properties": (
+        "id,landlord_id,unit_number,name,title,location,rent,monthly_rent,status,"
+        "is_archived,tenant_id,tenant_name,updated_at"
+    ),
+    "tenants": (
+        "id,name,email,phone,unit_id,unit_number,landlord_id,"
+        "monthly_rent,lease_start,lease_end,due_date,balance,status,is_archived,updated_at"
+    ),
+    "expenses": (
+        "id,title,category,amount,date,unit_id,unit_number,recorded_by,notes,"
+        "created_at,updated_at"
+    ),
+    "announcements": (
+        "id,title,message,timestamp,author,is_important,category,is_archived"
+    ),
+}
+
+DETAIL_TABLES = {
+    "landlords": "landlords",
+    "properties": "units",
+    "tenants": "tenants",
+    "payments": "payments",
+    "maintenance": "maintenance_tickets",
+    "inquiries": "tenant_inquiries",
+    "expenses": "expenses",
+    "public-listings": "public_listings",
+    "documents": "tenant_documents",
+    "announcements": "announcements",
+    "notifications": "notifications",
+    "events": "events",
+    "rfid-access": "rfid_access_logs",
+    "utility-history": "utility_rate_logs",
+    "settings": "settings",
+    "activity": "audit_logs",
+    "superadmins": "users",
+}
+
+DETAIL_FIELDS = {
+    "landlords": (
+        "id,uid,name,company_name,email,phone,status,created_at,updated_at"
+    ),
+    "properties": (
+        "id,landlord_id,unit_number,name,title,floor,location,rent,monthly_rent,"
+        "status,description,area_sqm,bedrooms,bathrooms,amenities,inclusions,"
+        "tenant_id,tenant_name,current_tenancy_id,due_date,is_archived,is_published,"
+        "details_completed,vacant_days,property_type,furnishing_status,security_deposit,"
+        "advance_rent_months,minimum_lease_months,rent_due_day,late_fee,"
+        "water_rate_override,electricity_rate_override,updated_at"
+    ),
+    "tenants": (
+        "id,landlord_id,name,email,phone,contact_number,address,unit_id,unit_number,"
+        "monthly_rent,lease_start,lease_end,due_date,balance,status,is_archived,"
+        "current_tenancy_id,security_deposit_held,utility_deposit_held,"
+        "emergency_contact_name,emergency_contact_phone,emergency_contact_relation,"
+        "co_occupants,vehicle_plate,vehicle_model,parking_slot,pet_details,lease_status,"
+        "notify_email,notify_sms,notify_push,health_status,updated_at"
+    ),
+    "payments": (
+        "id,landlord_id,month,amount,method,payment_method,date,payment_date,status,"
+        "unit_id,reference_number,base_rent,water_bill,electric_bill,late_fee,"
+        "other_charge,tenant_name,unit_number,tenant_id,tenancy_id,remarks,"
+        "decline_reason,transaction_type,ticket_id,created_at"
+    ),
+    "maintenance": (
+        "id,landlord_id,unit_id,unit_number,tenant_id,tenant_name,title,description,"
+        "category,priority,status,assigned_to,assigned_to_name,vendor_id,estimated_cost,"
+        "actual_cost,vendor_cost,date,created_at,sla_due_date,rating,rating_feedback,"
+        "responsible_party,payment_required,payment_status,status_history,tenancy_id,"
+        "affected_areas,issue_started_at,visit_scheduled_at,visit_time_window,"
+        "replacement_items,repair_scheduled_at,repair_time_window,repairer,"
+        "completion_summary,updated_at,repairer_phone,is_tenant_chargeable,labor_cost,"
+        "materials_cost,vendor_category,tenant_feedback"
+    ),
+    "inquiries": (
+        "id,created_at,updated_at,full_name,email,phone,preferred_unit_id,message,"
+        "status,assigned_unit_id,tenant_id,reviewed_by,reviewed_at,internal_note"
+    ),
+    "expenses": (
+        "id,title,category,amount,date,unit_id,unit_number,recorded_by,notes,"
+        "created_at,updated_at"
+    ),
+    "public-listings": (
+        "id,title,name,unit_number,location,rent,monthly_rent,description,area,"
+        "area_sqm,bedrooms,bathrooms,amenities,inclusions,property_type,"
+        "furnishing_status,security_deposit,advance_rent_months,"
+        "minimum_lease_months,updated_at"
+    ),
+    "documents": (
+        "id,tenant_id,tenant_name,title,type,file_name,file_size,uploaded_at"
+    ),
+    "announcements": (
+        "id,title,message,timestamp,author,is_important,category,is_archived"
+    ),
+    "notifications": (
+        "id,title,message,timestamp,is_read,is_archived,type,entity_type,entity_id,action"
+    ),
+    "events": (
+        "id,title,date,type,tenant_id,unit_id,ticket_id,unit_number,description,"
+        "is_completed,priority,time_window,location,created_at,updated_at"
+    ),
+    "rfid-access": (
+        "id,device_id,tenant_id,unit_id,action,access_status,created_at,event_id"
+    ),
+    "utility-history": (
+        "id,utility,previous_rate,new_rate,effective_at,note"
+    ),
+    "settings": (
+        "id,default_late_fee,default_due_day,auto_late_fee_enabled,"
+        "auto_backup_enabled,dark_mode,landlord_name,landlord_role,landlord_contact,"
+        "water_rate,electricity_rate,updated_at"
+    ),
+    "activity": "id,landlord_id,action,details,timestamp",
+    "superadmins": (
+        "id,uid,email,display_name,role,is_approved,must_change_password,created_at,"
+        "last_login_at,updated_at"
+    ),
+}
+
+DETAIL_GROUPS = {
+    "landlords": [
+        ("Profile", (("Name", "name"), ("Company", "company_name"), ("Email", "email"), ("Phone", "phone"))),
+        ("Account", (("Status", "status"), ("Created", "created_at"), ("Updated", "updated_at"))),
+    ],
+    "properties": [
+        ("Unit overview", (
+            ("Unit number", "unit_number"), ("Name", "name"), ("Title", "title"),
+            ("Floor", "floor"), ("Location", "location"), ("Property type", "property_type"),
+            ("Furnishing", "furnishing_status"), ("Area", "area_sqm"),
+            ("Bedrooms", "bedrooms"), ("Bathrooms", "bathrooms"),
+            ("Description", "description"), ("Amenities", "amenities"),
+            ("Inclusions", "inclusions"),
+        )),
+        ("Availability", (
+            ("Status", "status"), ("Archived", "is_archived"),
+            ("Published", "is_published"), ("Details completed", "details_completed"),
+            ("Vacant days", "vacant_days"),
+        )),
+        ("Rent and lease", (
+            ("Rent", "rent"), ("Monthly rent", "monthly_rent"),
+            ("Security deposit", "security_deposit"), ("Advance rent months", "advance_rent_months"),
+            ("Minimum lease months", "minimum_lease_months"), ("Rent due day", "rent_due_day"),
+            ("Late fee", "late_fee"), ("Due date", "due_date"),
+        )),
+        ("Occupancy and utilities", (
+            ("Tenant", "tenant_name"), ("Tenant ID", "tenant_id"),
+            ("Current tenancy ID", "current_tenancy_id"),
+            ("Water rate override", "water_rate_override"),
+            ("Electricity rate override", "electricity_rate_override"),
+        )),
+    ],
+    "tenants": [
+        ("Profile", (
+            ("Name", "name"), ("Email", "email"), ("Phone", "phone"),
+            ("Contact number", "contact_number"), ("Address", "address"),
+        )),
+        ("Tenancy", (
+            ("Unit number", "unit_number"), ("Unit ID", "unit_id"),
+            ("Monthly rent", "monthly_rent"), ("Lease starts", "lease_start"),
+            ("Lease ends", "lease_end"), ("Lease status", "lease_status"),
+            ("Tenant status", "status"), ("Due date", "due_date"),
+            ("Current tenancy ID", "current_tenancy_id"), ("Balance", "balance"),
+        )),
+        ("Deposits and household", (
+            ("Security deposit held", "security_deposit_held"),
+            ("Utility deposit held", "utility_deposit_held"),
+            ("Co-occupants", "co_occupants"), ("Vehicle plate", "vehicle_plate"),
+            ("Vehicle model", "vehicle_model"), ("Parking slot", "parking_slot"),
+            ("Pet details", "pet_details"),
+        )),
+        ("Notifications and access", (
+            ("Email notifications", "notify_email"), ("SMS notifications", "notify_sms"),
+            ("Push notifications", "notify_push"),
+        )),
+        ("Private details", (
+            ("Emergency contact", "emergency_contact_name"),
+            ("Emergency contact phone", "emergency_contact_phone"),
+            ("Emergency contact relation", "emergency_contact_relation"),
+            ("Health status", "health_status"),
+        )),
+    ],
+    "payments": [
+        ("Payment", (
+            ("Reference", "reference_number"), ("Status", "status"),
+            ("Month", "month"), ("Date", "payment_date"), ("Recorded date", "date"),
+            ("Amount", "amount"), ("Method", "payment_method"),
+            ("Transaction type", "transaction_type"), ("Remarks", "remarks"),
+            ("Decline reason", "decline_reason"),
+        )),
+        ("Breakdown", (
+            ("Base rent", "base_rent"), ("Water bill", "water_bill"),
+            ("Electric bill", "electric_bill"), ("Late fee", "late_fee"),
+            ("Other charge", "other_charge"),
+        )),
+    ],
+    "maintenance": [
+        ("Request", (
+            ("Title", "title"), ("Description", "description"),
+            ("Category", "category"), ("Affected areas", "affected_areas"),
+            ("Priority", "priority"), ("Status", "status"),
+            ("Created", "created_at"), ("Issue started", "issue_started_at"),
+            ("SLA due", "sla_due_date"),
+        )),
+        ("Assignment and schedule", (
+            ("Responsible party", "responsible_party"), ("Assigned to", "assigned_to_name"),
+            ("Visit scheduled", "visit_scheduled_at"), ("Visit time window", "visit_time_window"),
+            ("Repair scheduled", "repair_scheduled_at"), ("Repair time window", "repair_time_window"),
+            ("Repairer", "repairer"),
+        )),
+        ("Costs and completion", (
+            ("Estimated cost", "estimated_cost"), ("Actual cost", "actual_cost"),
+            ("Vendor cost", "vendor_cost"), ("Labor cost", "labor_cost"),
+            ("Materials cost", "materials_cost"), ("Replacement items", "replacement_items"),
+            ("Completion summary", "completion_summary"), ("Rating", "rating"),
+            ("Feedback", "tenant_feedback"),
+        )),
+    ],
+    "inquiries": [
+        ("Applicant", (
+            ("Name", "full_name"), ("Email", "email"), ("Phone", "phone"),
+            ("Message", "message"), ("Created", "created_at"), ("Updated", "updated_at"),
+        )),
+        ("Review", (
+            ("Status", "status"), ("Preferred unit ID", "preferred_unit_id"),
+            ("Assigned unit ID", "assigned_unit_id"), ("Tenant ID", "tenant_id"),
+            ("Internal note", "internal_note"), ("Reviewed by", "reviewed_by"),
+            ("Reviewed at", "reviewed_at"),
+        )),
+    ],
+    "expenses": [
+        ("Expense", (
+            ("Title", "title"), ("Category", "category"), ("Amount", "amount"),
+            ("Date", "date"), ("Unit", "unit_number"), ("Recorded by", "recorded_by"),
+            ("Notes", "notes"), ("Created", "created_at"), ("Updated", "updated_at"),
+        )),
+    ],
+    "public-listings": [
+        ("Listing", (
+            ("Title", "title"), ("Name", "name"), ("Unit number", "unit_number"),
+            ("Location", "location"), ("Property type", "property_type"),
+            ("Furnishing", "furnishing_status"), ("Rent", "rent"),
+            ("Monthly rent", "monthly_rent"), ("Security deposit", "security_deposit"),
+            ("Advance rent months", "advance_rent_months"),
+            ("Minimum lease months", "minimum_lease_months"),
+            ("Area", "area_sqm"), ("Bedrooms", "bedrooms"), ("Bathrooms", "bathrooms"),
+            ("Description", "description"), ("Amenities", "amenities"),
+            ("Inclusions", "inclusions"), ("Updated", "updated_at"),
+        )),
+    ],
+    "documents": [
+        ("Document metadata", (
+            ("Tenant", "tenant_name"), ("Title", "title"), ("Type", "type"),
+            ("File name", "file_name"), ("File size", "file_size"),
+            ("Uploaded", "uploaded_at"),
+        )),
+    ],
+    "announcements": [
+        ("Announcement", (
+            ("Title", "title"), ("Message", "message"), ("Category", "category"),
+            ("Author", "author"), ("Published", "timestamp"),
+            ("Important", "is_important"), ("Archived", "is_archived"),
+        )),
+    ],
+    "notifications": [
+        ("Notification", (
+            ("Title", "title"), ("Message", "message"), ("Type", "type"),
+            ("Timestamp", "timestamp"), ("Read", "is_read"),
+            ("Archived", "is_archived"), ("Related type", "entity_type"),
+            ("Related record ID", "entity_id"), ("Action", "action"),
+        )),
+    ],
+    "events": [
+        ("Event", (
+            ("Title", "title"), ("Date", "date"), ("Type", "type"),
+            ("Priority", "priority"), ("Completed", "is_completed"),
+            ("Time window", "time_window"), ("Location", "location"),
+            ("Description", "description"), ("Created", "created_at"),
+            ("Updated", "updated_at"),
+        )),
+    ],
+    "rfid-access": [
+        ("Access event", (
+            ("Device", "device_id"), ("Action", "action"),
+            ("Result", "access_status"), ("Time", "created_at"),
+            ("Event ID", "event_id"),
+        )),
+    ],
+    "utility-history": [
+        ("Rate change", (
+            ("Utility", "utility"), ("Previous rate", "previous_rate"),
+            ("New rate", "new_rate"), ("Effective", "effective_at"),
+            ("Note", "note"),
+        )),
+    ],
+    "settings": [
+        ("Defaults", (
+            ("Default late fee", "default_late_fee"), ("Default due day", "default_due_day"),
+            ("Automatic late fee", "auto_late_fee_enabled"),
+            ("Automatic backup", "auto_backup_enabled"),
+            ("Water rate", "water_rate"), ("Electricity rate", "electricity_rate"),
+        )),
+        ("Property contact and display", (
+            ("Landlord name", "landlord_name"), ("Landlord role", "landlord_role"),
+            ("Landlord contact", "landlord_contact"), ("Dark mode", "dark_mode"),
+            ("Updated", "updated_at"),
+        )),
+    ],
+    "activity": [
+        ("Audit entry", (
+            ("Action", "action"), ("Details", "details"),
+            ("Timestamp", "timestamp"), ("Landlord ID", "landlord_id"),
+        )),
+    ],
+    "superadmins": [
+        ("Account", (
+            ("Name", "display_name"), ("Email", "email"), ("Role", "role"),
+            ("Approved", "is_approved"),
+            ("Must change password", "must_change_password"),
+        )),
+        ("Activity", (
+            ("Created", "created_at"), ("Last login", "last_login_at"),
+            ("Updated", "updated_at"),
+        )),
+    ],
+}
+
+
+@contextmanager
+def get_db() -> Iterator[sqlite3.Connection]:
+    DATABASE.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(DATABASE)
+    connection.row_factory = sqlite3.Row
+    try:
+        with connection:
+            yield connection
+    finally:
+        connection.close()
+
+
+def init_db() -> None:
+    supabase_backend.init_sessions(DATABASE)
+    with get_db() as db:
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS landlords (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                company TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE,
+                phone TEXT NOT NULL DEFAULT '',
+                units INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'Invited',
+                created_at TEXT NOT NULL
+            )"""
+        )
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS records (
+                section TEXT NOT NULL,
+                id INTEGER NOT NULL,
+                data TEXT NOT NULL,
+                PRIMARY KEY (section, id)
+            )"""
+        )
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS offline_sync_changes (
+                user_uid TEXT NOT NULL,
+                change_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (user_uid, change_id)
+            )"""
+        )
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS auth_rate_limits (
+                endpoint TEXT NOT NULL,
+                identity_hash TEXT NOT NULL,
+                window_started_at INTEGER NOT NULL,
+                attempts INTEGER NOT NULL,
+                PRIMARY KEY (endpoint, identity_hash)
+            )"""
+        )
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS app_migrations (
+                name TEXT PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            )"""
+        )
+        demo_migration = "remove_sample_preview_records_v1"
+        if not db.execute(
+            "SELECT 1 FROM app_migrations WHERE name = ?", (demo_migration,)
+        ).fetchone():
+            db.execute(
+                """DELETE FROM landlords
+                   WHERE email IN (
+                     'amara@santosgroup.ph', 'daniel@reyesresidences.ph',
+                     'mikaela@cruzliving.ph', 'noah@northpoint.ph',
+                     'sofia@garciahomes.ph', 'ethan@limurban.ph'
+                   )"""
+            )
+            db.execute("DELETE FROM records WHERE id BETWEEN 1 AND 6")
+            db.execute(
+                "INSERT INTO app_migrations (name, applied_at) VALUES (?, ?)",
+                (demo_migration, datetime.now(timezone.utc).isoformat()),
+            )
+
+
+def _json_dumps(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def rows_for(section: str) -> list[dict[str, Any]]:
+    config = getattr(g, "supabase_config", None) if has_request_context() else None
+    if config is not None:
+        return live_rows_for(section)
+    with get_db() as db:
+        if section == "landlords":
+            return [dict(row) for row in db.execute("SELECT * FROM landlords ORDER BY id")]
+        records = db.execute(
+            "SELECT data FROM records WHERE section = ? ORDER BY id DESC", (section,)
+        ).fetchall()
+    rows = [json.loads(row["data"]) for row in records]
+    if section == "announcements":
+        rows = [
+            {
+                **row,
+                "importance": "Important" if row.get("is_important") is True else "Standard",
+                "status": "Archived" if row.get("is_archived") is True else "Published",
+            }
+            for row in rows
+        ]
+    elif section == "expenses":
+        rows = [
+            {**row, "unit": row.get("unit_number") or "Unlinked"}
+            for row in rows
+        ]
+    return rows
+
+
+def filtered_rows(section: str) -> tuple[list[dict[str, Any]], str, str]:
+    query = request.args.get("q", "").strip()
+    status = request.args.get("status", "All").strip()
+    all_rows = rows_for(section)
+    rows = all_rows
+    if section == "expenses":
+        period = request.args.get("period", "").strip()
+        if period:
+            if not re.fullmatch(r"\d{4}-\d{2}", period):
+                abort(400, description="Choose a valid expense month.")
+            try:
+                selected_month = date.fromisoformat(f"{period}-01")
+            except ValueError:
+                abort(400, description="Choose a valid expense month.")
+            if selected_month < MIN_ENTRY_DATE:
+                abort(400, description="Choose an expense month from January 2025 onward.")
+            rows = [
+                row for row in rows
+                if str(row.get("date") or "").startswith(period)
+            ]
+    if query:
+        needle = query.casefold()
+        rows = [
+            row
+            for row in rows
+            if needle in " ".join(str(value) for value in row.values()).casefold()
+        ]
+    if status != "All":
+        rows = [row for row in rows if row.get("status") == status]
+    return rows, query, status
+
+
+def sorted_rows(
+    section: str, rows: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], str, str]:
+    sort_key = request.args.get("sort", "").strip()
+    direction = request.args.get("direction", "asc").strip().lower()
+    if direction not in {"asc", "desc"}:
+        abort(400, description="Choose ascending or descending sort order.")
+    if not sort_key:
+        return rows, "", direction
+    valid_keys = {key for key, _ in SECTIONS[section]["columns"]}
+    if sort_key not in valid_keys:
+        abort(400, description="Choose a valid sort column.")
+
+    def value_key(row: dict[str, Any]) -> tuple[int, Any]:
+        value = row.get(sort_key)
+        if value is None or value == "":
+            return (0, "")
+        if isinstance(value, bool):
+            return (1, int(value))
+        if isinstance(value, (int, float)):
+            return (1, float(value))
+        parsed_date = _as_datetime(str(value))
+        if parsed_date is not None:
+            return (2, parsed_date.timestamp())
+        text = str(value).strip()
+        if re.fullmatch(r"-?\d+(?:\.\d+)?", text):
+            return (1, float(text))
+        return (3, text.casefold())
+
+    return (
+        sorted(rows, key=value_key, reverse=direction == "desc"),
+        sort_key,
+        direction,
+    )
+
+
+def currency(value: int | float) -> str:
+    return f"₱{value:,.0f}"
+
+
+def currency_precise(value: int | float) -> str:
+    return f"₱{value:,.2f}"
+
+
+@app.context_processor
+def inject_globals() -> dict[str, Any]:
+    return {
+        "nav_items": NAV_ITEMS,
+        "current_date": date.today().strftime("%A, %B %d, %Y").replace(" 0", " "),
+        "currency": currency,
+        "currency_precise": currency_precise,
+        "preview_mode": getattr(g, "preview_mode", True),
+        "supabase_connected": getattr(g, "supabase_config", None) is not None,
+        "current_user": getattr(g, "current_user", None),
+        "csrf_token": getattr(g, "csrf_token", ""),
+    }
+
+
+@app.before_request
+def prepare_database() -> None:
+    init_db()
+    if request.endpoint in {"static", "service_worker"}:
+        return
+    try:
+        g.supabase_config = supabase_backend.settings()
+    except supabase_backend.SupabaseConfigurationError:
+        app.logger.exception("Supabase configuration is invalid.")
+        abort(503, description="Supabase configuration is incomplete or invalid.")
+    g.preview_mode = g.supabase_config is None
+    g.offline_replay = request.headers.get("X-Ramp-Offline-Replay") == "1"
+    if g.supabase_config is None:
+        g.csrf_token = session.setdefault("csrf_token", secrets.token_urlsafe(32))
+        if request.method == "POST":
+            validate_csrf(g.csrf_token)
+        return
+    g.csrf_token = session.get("csrf_token", "")
+    sid = session.get("supabase_session_id")
+    g.current_user = None
+    g.authenticated = None
+    if sid:
+        try:
+            authenticated = supabase_backend.load_session(
+                g.supabase_config, DATABASE, sid
+            )
+        except supabase_backend.SupabaseRequestError:
+            app.logger.exception("Supabase session validation failed.")
+            abort(503, description="Could not validate the Supabase session.")
+        if authenticated is not None:
+            g.authenticated, g.csrf_token = authenticated
+            g.current_user = g.authenticated["profile"]
+    if request.endpoint in {"login", "forgot_password"}:
+        if g.current_user is None:
+            g.csrf_token = session.setdefault(
+                "login_csrf_token", secrets.token_urlsafe(32)
+            )
+        return
+    if g.current_user is None:
+        if g.offline_replay:
+            return jsonify({"error": "Sign in again before syncing offline changes."}), 401
+        session.clear()
+        return redirect(url_for("login", next=request.full_path.rstrip("?")))
+    if g.offline_replay and request.method == "POST":
+        change_id = request.headers.get("X-Ramp-Offline-Change", "")
+        if change_id:
+            with get_db() as db:
+                exists = db.execute(
+                    "SELECT 1 FROM offline_sync_changes WHERE user_uid = ? AND change_id = ?",
+                    (g.current_user.get("uid", ""), change_id),
+                ).fetchone()
+            if exists:
+                return jsonify({"synced": True, "duplicate": True})
+    if request.method == "POST":
+        validate_csrf(g.csrf_token)
+
+
+def validate_csrf(expected: str) -> None:
+    supplied = request.form.get("csrf_token", "")
+    if not expected or not secrets.compare_digest(expected, supplied):
+        abort(400, description="The form expired. Reload the page and try again.")
+
+
+def _auth_identity_hash(email: str) -> str:
+    return hmac.new(
+        app.config["SECRET_KEY"].encode("utf-8"),
+        email.casefold().encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _auth_rate_limit(endpoint: str, email: str) -> int:
+    identity_hash = _auth_identity_hash(email)
+    now = int(time.time())
+    with get_db() as db:
+        db.execute(
+            "DELETE FROM auth_rate_limits WHERE window_started_at <= ?",
+            (now - AUTH_RATE_LIMIT_WINDOW_SECONDS,),
+        )
+        row = db.execute(
+            """SELECT window_started_at, attempts FROM auth_rate_limits
+               WHERE endpoint = ? AND identity_hash = ?""",
+            (endpoint, identity_hash),
+        ).fetchone()
+        if row is not None:
+            retry_after = (
+                row["window_started_at"] + AUTH_RATE_LIMIT_WINDOW_SECONDS - now
+            )
+            if row["attempts"] >= AUTH_RATE_LIMIT_MAX_ATTEMPTS:
+                return max(1, retry_after)
+            db.execute(
+                """UPDATE auth_rate_limits SET attempts = attempts + 1
+                   WHERE endpoint = ? AND identity_hash = ?""",
+                (endpoint, identity_hash),
+            )
+        else:
+            db.execute(
+                """INSERT INTO auth_rate_limits
+                   (endpoint, identity_hash, window_started_at, attempts)
+                   VALUES (?, ?, ?, 1)""",
+                (endpoint, identity_hash, now),
+            )
+    return 0
+
+
+def _clear_auth_rate_limit(endpoint: str, email: str) -> None:
+    identity_hash = _auth_identity_hash(email)
+    with get_db() as db:
+        db.execute(
+            "DELETE FROM auth_rate_limits WHERE endpoint = ? AND identity_hash = ?",
+            (endpoint, identity_hash),
+        )
+
+
+@app.after_request
+def finalize_offline_replay(response):
+    if (
+        not getattr(g, "offline_replay", False)
+        or request.method != "POST"
+        or not 300 <= response.status_code < 400
+    ):
+        return response
+    change_id = request.headers.get("X-Ramp-Offline-Change", "")
+    user_uid = (getattr(g, "current_user", None) or {}).get("uid", "")
+    if change_id and user_uid:
+        with get_db() as db:
+            db.execute(
+                """INSERT OR IGNORE INTO offline_sync_changes
+                   (user_uid, change_id, created_at) VALUES (?, ?, ?)""",
+                (user_uid, change_id, datetime.now(timezone.utc).isoformat()),
+            )
+    response.set_data(json.dumps({"synced": True}))
+    response.status_code = 200
+    response.headers["Content-Type"] = "application/json"
+    response.headers.pop("Location", None)
+    return response
+
+
+def fetch_supabase_table(table: str) -> list[dict[str, Any]]:
+    cache = getattr(g, "supabase_table_cache", None)
+    if cache is None:
+        cache = {}
+        g.supabase_table_cache = cache
+    if table in cache:
+        return cache[table]
+    config = getattr(g, "supabase_config", None)
+    auth = getattr(g, "authenticated", None)
+    if config is None or auth is None:
+        raise RuntimeError("A signed-in Supabase session is required.")
+    result: list[dict[str, Any]] = []
+    offset = 0
+    page_size = 500
+    fields = {
+        "landlords": "id,uid,name,company_name,email,phone,status,created_at,updated_at",
+        "units": "id,landlord_id,unit_number,name,title,location,property_type,rent,monthly_rent,status,is_archived,tenant_id,tenant_name,updated_at",
+        "tenants": "id,name,email,phone,unit_id,unit_number,lease_start,lease_end,lease_status,monthly_rent,balance,status,is_archived,landlord_id,updated_at",
+        "payments": "id,reference_number,tenant_name,unit_number,month,amount,method,payment_method,status,unit_id,tenant_id,payment_date,date,transaction_type,created_at",
+        "maintenance_tickets": "id,unit_id,unit_number,tenant_id,tenant_name,title,priority,status,assigned_to_name,sla_due_date,created_at,date",
+        "tenant_inquiries": "id,created_at,updated_at,full_name,email,phone,preferred_unit_id,message,status,assigned_unit_id,tenant_id",
+        "expenses": "id,title,category,amount,date,unit_id,unit_number,recorded_by,notes,created_at,updated_at",
+        "public_listings": "id,title,name,unit_number,location,rent,monthly_rent,description,area,area_sqm,bedrooms,bathrooms,amenities,inclusions,property_type,furnishing_status,security_deposit,advance_rent_months,minimum_lease_months,updated_at",
+        "tenant_documents": "id,tenant_id,tenant_name,title,type,file_name,file_size,uploaded_at",
+        "announcements": "id,title,message,timestamp,author,is_important,category,is_archived",
+        "notifications": "id,title,message,timestamp,is_read,is_archived,type,entity_type,entity_id,action",
+        "events": "id,title,date,type,tenant_id,unit_id,ticket_id,unit_number,description,is_completed,priority,time_window,location,created_at,updated_at",
+        "rfid_access_logs": "id,device_id,tenant_id,unit_id,action,access_status,created_at,event_id",
+        "utility_rate_logs": "id,utility,previous_rate,new_rate,effective_at,note",
+        "settings": "id,default_late_fee,default_due_day,auto_late_fee_enabled,auto_backup_enabled,dark_mode,landlord_name,landlord_role,landlord_contact,water_rate,electricity_rate,updated_at",
+        "audit_logs": "id,landlord_id,action,details,timestamp",
+        "users": "id,uid,email,display_name,role,is_approved,must_change_password,created_at,last_login_at,updated_at",
+    }
+    if table not in fields:
+        raise ValueError("Unsupported Supabase table.")
+    ordering = {
+        "landlords": "created_at.desc",
+        "tenant_inquiries": "created_at.desc",
+        "expenses": "date.desc",
+        "tenant_documents": "uploaded_at.desc",
+        "announcements": "timestamp.desc",
+        "notifications": "timestamp.desc",
+        "events": "date.asc",
+        "rfid_access_logs": "created_at.desc",
+        "utility_rate_logs": "effective_at.desc",
+        "public_listings": "updated_at.desc",
+        "audit_logs": "timestamp.desc",
+        "users": "created_at.desc",
+    }.get(table, "id.asc")
+    while True:
+        page = supabase_backend.api_request(
+            config,
+            auth["access_token"],
+            table,
+            query={
+                "select": fields[table],
+                "order": ordering,
+                "limit": str(page_size),
+                "offset": str(offset),
+            },
+        )
+        if not isinstance(page, list):
+            raise supabase_backend.SupabaseRequestError(502, "invalid_response")
+        result.extend(
+            row
+            for row in page
+            if isinstance(row, dict)
+            and (table != "users" or row.get("role") == "super_admin")
+        )
+        if len(page) < page_size:
+            cache[table] = result
+            return result
+        offset += page_size
+
+
+def live_rows_for(section: str) -> list[dict[str, Any]]:
+    table_by_section = {
+        "landlords": "landlords",
+        "properties": "units",
+        "tenants": "tenants",
+        "payments": "payments",
+        "maintenance": "maintenance_tickets",
+        "inquiries": "tenant_inquiries",
+        "expenses": "expenses",
+        "public-listings": "public_listings",
+        "documents": "tenant_documents",
+        "announcements": "announcements",
+        "notifications": "notifications",
+        "events": "events",
+        "rfid-access": "rfid_access_logs",
+        "utility-history": "utility_rate_logs",
+        "settings": "settings",
+        "activity": "audit_logs",
+        "superadmins": "users",
+    }
+    table = table_by_section.get(section)
+    if table is None:
+        return []
+    raw_rows = fetch_supabase_table(table)
+    landlords = fetch_supabase_table("landlords") if section == "properties" else []
+    tenants = (
+        fetch_supabase_table("tenants")
+        if section in {
+            "properties", "payments", "maintenance", "expenses",
+            "documents", "events", "rfid-access",
+        }
+        else []
+    )
+    units = (
+        fetch_supabase_table("units")
+        if section in {
+            "tenants", "payments", "maintenance", "inquiries",
+            "expenses", "documents", "events", "rfid-access",
+        }
+        else []
+    )
+    landlord_names = {
+        row.get("uid"): row.get("name") or row.get("email", "")
+        for row in landlords
+    }
+    unit_by_id = {row.get("id"): row for row in units}
+    tenant_by_id = {row.get("id"): row for row in tenants}
+    landlord_unit_counts: dict[str, int] = {}
+    if section == "landlords":
+        for unit in fetch_supabase_table("units"):
+            owner = unit.get("landlord_id")
+            if owner:
+                landlord_unit_counts[owner] = landlord_unit_counts.get(owner, 0) + 1
+    normalized = []
+    for row in raw_rows:
+        if section == "superadmins":
+            normalized.append(
+                {
+                    **row,
+                    "display_name": row.get("display_name") or (row.get("email") or "").split("@")[0],
+                    "status": "Active" if row.get("is_approved") is True else "Disabled",
+                }
+            )
+        elif section == "landlords":
+            display_status = _display_status(row.get("status"))
+            normalized.append(
+                {
+                    **row,
+                    "name": row.get("name") or (row.get("email") or "").split("@")[0],
+                    "company": row.get("company_name") or "",
+                    "units": landlord_unit_counts.get(row.get("uid"), 0),
+                    "status": display_status,
+                }
+            )
+        elif section == "properties":
+            tenant = tenant_by_id.get(row.get("tenant_id"), {})
+            normalized.append(
+                {
+                    **row,
+                    "name": row.get("name") or row.get("title") or row.get("unit_number") or "Unnamed property",
+                    "location": row.get("location") or "",
+                    "landlord": landlord_names.get(row.get("landlord_id"), "Unassigned"),
+                    "tenant": row.get("tenant_name") or tenant.get("name") or "—",
+                    "rent": row.get("monthly_rent", row.get("rent", 0)) or 0,
+                    "status": "Archived" if row.get("is_archived") is True else _display_status(row.get("status")),
+                }
+            )
+        elif section == "tenants":
+            unit = unit_by_id.get(row.get("unit_id"), {})
+            normalized.append(
+                {
+                    **row,
+                    "name": row.get("name") or "Unnamed tenant",
+                    "property": row.get("unit_number") or unit.get("unit_number") or "—",
+                    "lease_end": row.get("lease_end") or "—",
+                    "balance": row.get("balance") or 0,
+                    "status": "Archived" if row.get("is_archived") is True else _display_status(row.get("status")),
+                }
+            )
+        elif section == "payments":
+            unit = unit_by_id.get(row.get("unit_id"), {})
+            tenant = tenant_by_id.get(row.get("tenant_id"), {})
+            normalized.append(
+                {
+                    **row,
+                    "reference": row.get("reference_number") or row.get("id"),
+                    "tenant": row.get("tenant_name") or tenant.get("name") or "—",
+                    "property": row.get("unit_number") or unit.get("unit_number") or "—",
+                    "month": row.get("month") or "—",
+                    "amount": row.get("amount") or 0,
+                    "method": row.get("payment_method") or row.get("method") or "—",
+                    "status": _display_status(row.get("status")),
+                    "paid_on": row.get("payment_date") or row.get("date") or "—",
+                }
+            )
+        elif section == "maintenance":
+            unit = unit_by_id.get(row.get("unit_id"), {})
+            tenant = tenant_by_id.get(row.get("tenant_id"), {})
+            normalized.append(
+                {
+                    **row,
+                    "property": row.get("unit_number") or unit.get("unit_number") or "—",
+                    "tenant": row.get("tenant_name") or tenant.get("name") or "—",
+                    "priority": _display_status(row.get("priority")),
+                    "status": _display_status(row.get("status")),
+                    "created": row.get("created_at") or row.get("date") or "—",
+                }
+            )
+        elif section == "inquiries":
+            preferred_unit = next(
+                (unit for unit in units if unit.get("id") == row.get("preferred_unit_id")),
+                {},
+            )
+            normalized.append(
+                {
+                    **row,
+                    "sender": row.get("full_name") or "—",
+                    "email": row.get("email") or "—",
+                    "property": preferred_unit.get("unit_number") or preferred_unit.get("name") or "—",
+                    "message": row.get("message") or "",
+                    "received": row.get("created_at") or row.get("timestamp") or "—",
+                    "status": _display_status(row.get("status")),
+                }
+            )
+        elif section == "expenses":
+            unit = unit_by_id.get(row.get("unit_id"), {})
+            normalized.append(
+                {
+                    **row,
+                    "unit": row.get("unit_number") or unit.get("unit_number") or "Unlinked",
+                }
+            )
+        elif section == "public-listings":
+            normalized.append(
+                {
+                    **row,
+                    "title": row.get("title") or row.get("name") or "Untitled listing",
+                    "rent": row.get("monthly_rent", row.get("rent", 0)) or 0,
+                }
+            )
+        elif section == "documents":
+            tenant = tenant_by_id.get(row.get("tenant_id"), {})
+            normalized.append(
+                {
+                    **row,
+                    "tenant": tenant.get("name") or row.get("tenant_name") or "Unlinked",
+                }
+            )
+        elif section == "announcements":
+            normalized.append(
+                {
+                    **row,
+                    "importance": "Important" if row.get("is_important") is True else "Standard",
+                    "status": "Archived" if row.get("is_archived") is True else "Published",
+                }
+            )
+        elif section == "notifications":
+            if row.get("is_archived") is True:
+                status = "Archived"
+            else:
+                status = "Read" if row.get("is_read") is True else "Unread"
+            normalized.append({**row, "status": status})
+        elif section == "events":
+            unit = unit_by_id.get(row.get("unit_id"), {})
+            tenant = tenant_by_id.get(row.get("tenant_id"), {})
+            normalized.append(
+                {
+                    **row,
+                    "unit_number": row.get("unit_number") or unit.get("unit_number") or "Unlinked",
+                    "tenant_name": tenant.get("name") or "Unlinked",
+                    "status": "Completed" if row.get("is_completed") is True else "Upcoming",
+                }
+            )
+        elif section == "rfid-access":
+            unit = unit_by_id.get(row.get("unit_id"), {})
+            tenant = tenant_by_id.get(row.get("tenant_id"), {})
+            normalized.append(
+                {
+                    **row,
+                    "device": row.get("device_id") or "—",
+                    "unit": unit.get("unit_number") or "Unlinked",
+                    "tenant": tenant.get("name") or "Unlinked",
+                    "created": row.get("created_at") or "—",
+                    "access_status": _display_status(row.get("access_status")),
+                }
+            )
+        elif section in {"utility-history", "settings"}:
+            normalized.append(dict(row))
+        else:
+            details = row.get("details", "")
+            try:
+                details = json.loads(details) if isinstance(details, str) else details
+            except json.JSONDecodeError:
+                details = {}
+            if not isinstance(details, dict):
+                details = {}
+            normalized.append(
+                {
+                    **row,
+                    "actor": details.get("actor_email") or "Administrator",
+                    "action": row.get("action") or "Updated record",
+                    "target": details.get("description") or details.get("target_id") or "—",
+                    "occurred": row.get("timestamp") or "—",
+                }
+            )
+    return normalized
+
+
+def _display_status(value: Any) -> str:
+    text = str(value or "Unknown").replace("_", " ").strip()
+    return text[:1].upper() + text[1:]
+
+
+def _fetch_supabase_record(
+    table: str, record_id: str, fields: str, *, role: str | None = None
+) -> dict[str, Any] | None:
+    config = getattr(g, "supabase_config", None)
+    auth = getattr(g, "authenticated", None)
+    if config is None or auth is None:
+        raise RuntimeError("A signed-in Supabase session is required.")
+    query = {"select": fields, "id": f"eq.{record_id}", "limit": "1"}
+    if role:
+        query["role"] = f"eq.{role}"
+    result = supabase_backend.api_request(
+        config, auth["access_token"], table, query=query
+    )
+    if not isinstance(result, list):
+        raise supabase_backend.SupabaseRequestError(502, "invalid_response")
+    return dict(result[0]) if result and isinstance(result[0], dict) else None
+
+
+def _fetch_supabase_related(
+    table: str,
+    relation_column: str,
+    related_id: Any,
+    fields: str,
+    *,
+    order: str = "id.desc",
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    config = getattr(g, "supabase_config", None)
+    auth = getattr(g, "authenticated", None)
+    if config is None or auth is None:
+        raise RuntimeError("A signed-in Supabase session is required.")
+    if not relation_column.replace("_", "").isalnum() or not str(related_id).strip():
+        return []
+    result = supabase_backend.api_request(
+        config,
+        auth["access_token"],
+        table,
+        query={
+            "select": fields,
+            relation_column: f"eq.{related_id}",
+            "order": order,
+            "limit": str(limit),
+        },
+    )
+    if not isinstance(result, list):
+        raise supabase_backend.SupabaseRequestError(502, "invalid_response")
+    return [dict(row) for row in result if isinstance(row, dict)]
+
+
+def _detail_groups(section: str, record: dict[str, Any]) -> list[dict[str, Any]]:
+    money_fields = {
+        "rent", "monthly_rent", "security_deposit", "late_fee",
+        "security_deposit_held", "utility_deposit_held", "balance", "amount",
+        "base_rent", "water_bill", "electric_bill", "other_charge",
+        "estimated_cost", "actual_cost", "vendor_cost", "labor_cost", "materials_cost",
+    }
+    groups = []
+    for title, fields in DETAIL_GROUPS[section]:
+        values = []
+        for label, key in fields:
+            value = record.get(key)
+            if value is None or value == "":
+                continue
+            if key in money_fields:
+                try:
+                    value = currency(float(value))
+                except (TypeError, ValueError):
+                    value = str(value)
+            elif isinstance(value, bool):
+                value = "Yes" if value else "No"
+            elif isinstance(value, (list, dict)):
+                value = json.dumps(value, ensure_ascii=False)
+            values.append({"label": label, "value": str(value)})
+        if values:
+            groups.append({"title": title, "fields": values})
+    return groups
+
+
+def _related_link(section: str, record: dict[str, Any] | None, title: str, meta: str = "") -> dict[str, str] | None:
+    if not record or record.get("id") is None:
+        return None
+    return {
+        "title": title,
+        "meta": meta,
+        "url": url_for(
+            "record_detail", section=section, record_id=str(record["id"])
+        ),
+    }
+
+
+@app.get("/")
+def dashboard():
+    landlords = rows_for("landlords")
+    properties = rows_for("properties")
+    payments = rows_for("payments")
+    maintenance = rows_for("maintenance")
+    tenants = rows_for("tenants")
+    inquiries = rows_for("inquiries")
+    now = datetime.now()
+    today = now.date()
+    period = request.args.get("period", "").strip()
+    if period:
+        if not re.fullmatch(r"\d{4}-\d{2}", period):
+            abort(400, description="Choose a valid month.")
+        try:
+            selected_month = datetime.strptime(period, "%Y-%m")
+        except ValueError:
+            abort(400, description="Choose a valid month.")
+        if selected_month.date() < MIN_ENTRY_DATE:
+            abort(400, description="Choose a month from January 2025 onward.")
+    else:
+        selected_month = now.replace(day=1)
+    paid_this_month = 0
+    for payment in payments:
+        if (
+            str(payment.get("status", "")).casefold() != "paid"
+            or str(payment.get("transaction_type", "rent")).casefold() != "rent"
+        ):
+            continue
+        paid_at = _as_datetime(
+            payment.get("payment_date")
+            or payment.get("paid_at")
+            or payment.get("date")
+            or payment.get("paid_on")
+        )
+        if paid_at is not None and (
+            paid_at.year,
+            paid_at.month,
+        ) == (selected_month.year, selected_month.month):
+            paid_this_month += _number(payment.get("amount"))
+
+    active_properties = [
+        item for item in properties
+        if item.get("is_archived") is not True
+        and str(item.get("status", "")).casefold() != "archived"
+    ]
+    unit_status_counts: dict[str, int] = {}
+    for unit in active_properties:
+        unit_status = str(unit.get("status") or "Unknown")
+        unit_status_counts[unit_status] = unit_status_counts.get(unit_status, 0) + 1
+    occupied_properties = sum(
+        str(item.get("status", "")).casefold() == "occupied"
+        for item in active_properties
+    )
+    vacant_properties = sum(
+        str(item.get("status", "")).casefold() == "vacant"
+        for item in active_properties
+    )
+    reserved_properties = sum(
+        str(item.get("status", "")).casefold() == "reserved"
+        for item in active_properties
+    )
+    maintenance_properties = sum(
+        str(item.get("status", "")).casefold() in {"maintenance", "under maintenance"}
+        for item in active_properties
+    )
+    open_tickets = [
+        ticket
+        for ticket in maintenance
+        if str(ticket.get("status", "")).casefold()
+        not in {"completed", "closed", "resolved", "cancelled", "canceled"}
+    ]
+    high_priority_tickets = sum(
+        str(ticket.get("priority", "")).casefold() in {"high", "urgent", "critical"}
+        for ticket in open_tickets
+    )
+    pending_inquiries = [
+        inquiry for inquiry in inquiries
+        if str(inquiry.get("status", "")).casefold() == "pending"
+    ]
+    pending_payments = [
+        payment for payment in payments
+        if str(payment.get("status", "")).casefold() == "pending"
+    ]
+    overdue_payments = [
+        payment for payment in payments
+        if str(payment.get("status", "")).casefold() == "overdue"
+    ]
+    lease_ending_soon = []
+    for tenant in tenants:
+        if tenant.get("is_archived") is True:
+            continue
+        if str(tenant.get("status", "")).casefold() not in {"active", "current"}:
+            continue
+        lease_end = _as_datetime(tenant.get("lease_end"))
+        if lease_end and today <= lease_end.date() <= today + timedelta(days=30):
+            lease_ending_soon.append(tenant)
+
+    stats = {
+        "landlords": sum(
+            str(row.get("status", "")).casefold() == "active" for row in landlords
+        ),
+        "properties": len(active_properties),
+        "collected": paid_this_month,
+        "occupied_properties": occupied_properties,
+        "vacant_properties": vacant_properties,
+        "reserved_properties": reserved_properties,
+        "maintenance_properties": maintenance_properties,
+        "pending_inquiries": len(pending_inquiries),
+        "pending_payments": len(pending_payments),
+        "overdue_payments": len(overdue_payments),
+        "open_tickets": len(open_tickets),
+        "high_priority_tickets": high_priority_tickets,
+        "lease_ending_soon": len(lease_ending_soon),
+    }
+    attention_items = []
+    if open_tickets:
+        attention_items.append(
+            {
+                "count": len(open_tickets),
+                "title": "Open maintenance",
+                "unit": "request",
+                "section": "maintenance",
+            }
+        )
+    if pending_inquiries:
+        attention_items.append(
+            {
+                "count": len(pending_inquiries),
+                "title": "Pending tenant inquiries",
+                "unit": "inquiry",
+                "section": "inquiries",
+                "status": "Pending",
+            }
+        )
+    if overdue_payments:
+        attention_items.append(
+            {
+                "count": len(overdue_payments),
+                "title": "Payments marked overdue",
+                "unit": "payment",
+                "section": "payments",
+                "status": "Overdue",
+            }
+        )
+    if lease_ending_soon:
+        attention_items.append(
+            {
+                "count": len(lease_ending_soon),
+                "title": "Leases ending in 30 days",
+                "unit": "lease",
+                "section": "tenants",
+            }
+        )
+
+    recent_activity = []
+    recent_sources = (
+        ("activity", rows_for("activity"), "occurred", "action"),
+        ("inquiries", inquiries, "received", "sender"),
+        ("payments", payments, "created_at", "reference"),
+        ("maintenance", maintenance, "created", "title"),
+    )
+    for section, source_rows, date_key, title_key in recent_sources:
+        for row in source_rows:
+            occurred = (
+                _as_datetime(row.get(date_key))
+                or _as_datetime(row.get("paid_on"))
+                or _as_datetime(row.get("date"))
+            )
+            if occurred is None:
+                continue
+            recent_activity.append(
+                {
+                    "section": section,
+                    "record_id": row.get("id"),
+                    "title": str(row.get(title_key) or row.get("action") or "Record updated"),
+                    "detail": str(row.get("status") or row.get("target") or ""),
+                    "occurred": occurred,
+                }
+            )
+    recent_activity.sort(key=lambda item: item["occurred"], reverse=True)
+    for item in recent_activity:
+        if item["record_id"] is not None:
+            item["url"] = url_for(
+                "record_detail",
+                section=item["section"],
+                record_id=str(item["record_id"]),
+            )
+        item["occurred_label"] = item["occurred"].strftime("%b %d, %Y")
+
+    return render_template(
+        "dashboard.html",
+        stats=stats,
+        attention_items=attention_items,
+        month_label=selected_month.strftime("%B %Y"),
+        selected_period=selected_month.strftime("%Y-%m"),
+        unit_status_counts=unit_status_counts,
+        recent_activity=recent_activity[:6],
+    )
+
+
+@app.get("/search")
+def global_search():
+    query = request.args.get("q", "").strip()
+    if len(query) > 120:
+        abort(400, description="Search terms must be 120 characters or fewer.")
+    results = []
+    if query:
+        sections = (
+            "properties", "tenants", "landlords", "superadmins",
+            "inquiries", "payments", "maintenance", "expenses",
+            "public-listings", "documents", "announcements", "notifications",
+            "events", "rfid-access", "utility-history", "settings",
+        )
+        needle = query.casefold()
+        for section in sections:
+            matches = [
+                row for row in rows_for(section)
+                if needle in " ".join(str(value) for value in row.values()).casefold()
+            ]
+            display_items = []
+            for row in matches[:5]:
+                title = (
+                    row.get("unit_number") or row.get("name") or row.get("display_name")
+                    or row.get("sender") or row.get("title")
+                    or row.get("reference") or row.get("reference_number")
+                    or row.get("email") or str(row.get("id") or "Record")
+                )
+                subtitle = " · ".join(
+                    str(row[key])
+                    for key in ("email", "property", "status", "month", "paid_on", "priority")
+                    if row.get(key)
+                )
+                link = _related_link(section, row, str(title), subtitle)
+                if link is not None:
+                    display_items.append(link)
+            if matches:
+                results.append(
+                    {
+                        "section": section,
+                        "title": SECTIONS[section]["title"],
+                        "count": len(matches),
+                        "items": display_items,
+                        "more_url": url_for(
+                            "records_page", section=section, q=query
+                        ),
+                    }
+                )
+    return render_template(
+        "search_results.html", query=query, results=results
+    )
+
+
+@app.get("/<section>")
+def records_page(section: str):
+    if section in {"connections", "access"}:
+        return render_template("placeholder.html", section=section)
+    if section not in SECTIONS:
+        abort(404)
+    filtered, query, status = filtered_rows(section)
+    filtered, sort, direction = sorted_rows(section, filtered)
+    all_rows = rows_for(section)
+    period = request.args.get("period", "").strip() if section == "expenses" else ""
+    expense_total = sum(_number(row.get("amount")) for row in filtered) if section == "expenses" else 0
+    try:
+        page_number = int(request.args.get("page", "1"))
+    except ValueError:
+        abort(400, description="Choose a valid page number.")
+    page_count = max(1, math.ceil(len(filtered) / RECORDS_PAGE_SIZE))
+    if page_number < 1 or page_number > page_count:
+        abort(404, description="That page does not exist.")
+    start_index = (page_number - 1) * RECORDS_PAGE_SIZE
+    rows = filtered[start_index : start_index + RECORDS_PAGE_SIZE]
+    page_start = start_index + 1 if rows else 0
+    page_end = start_index + len(rows)
+    statuses = sorted({str(row["status"]) for row in all_rows if row.get("status")})
+    related_landlords = rows_for("landlords") if section in {"properties", "tenants"} else []
+    related_properties = rows_for("properties") if section == "tenants" else []
+    return render_template(
+        "records.html",
+        section=section,
+        config=SECTIONS[section],
+        rows=rows,
+        query=query,
+        status=status,
+        sort=sort,
+        direction=direction,
+        statuses=statuses,
+        filtered_total=len(filtered),
+        page_number=page_number,
+        page_count=page_count,
+        page_start=page_start,
+        page_end=page_end,
+        rows_for_count=len(all_rows),
+        status_counts={
+            item: sum(row.get("status") == item for row in all_rows)
+            for item in statuses
+        },
+        related_landlords=related_landlords,
+        related_properties=related_properties,
+        period=period,
+        expense_total=expense_total,
+    )
+
+
+@app.get("/settings/terms")
+def terms_draft():
+    return render_template("terms_draft.html")
+
+
+@app.get("/<section>/<record_id>")
+def record_detail(section: str, record_id: str):
+    if section not in DETAIL_FIELDS:
+        abort(404)
+    if getattr(g, "supabase_config", None) is None:
+        record = next(
+            (row for row in rows_for(section) if str(row.get("id")) == record_id),
+            None,
+        )
+    else:
+        record = _fetch_supabase_record(
+            DETAIL_TABLES[section],
+            record_id,
+            DETAIL_FIELDS[section],
+            role="super_admin" if section == "superadmins" else None,
+        )
+    if record is None:
+        abort(404)
+
+    related_groups: list[dict[str, Any]] = []
+    review_units: list[dict[str, Any]] = []
+
+    def add_group(title: str, items: list[dict[str, Any] | None]) -> None:
+        related_groups.append(
+            {"title": title, "items": [item for item in items if item is not None]}
+        )
+
+    def find_related(section_name: str, table: str, related_id: Any, fields: str):
+        if related_id is None or str(related_id).strip() == "":
+            return None
+        if getattr(g, "supabase_config", None) is None:
+            rows = rows_for(section_name)
+            return next(
+                (row for row in rows if str(row.get("id")) == str(related_id)),
+                None,
+            )
+        return _fetch_supabase_record(table, str(related_id), fields)
+
+    def add_linked_record(
+        title: str, section_name: str, table: str, related_id: Any, fields: str, label: str
+    ) -> dict[str, str]:
+        linked = find_related(section_name, table, related_id, fields)
+        if linked is None:
+            return {"title": title, "meta": "Unlinked", "url": ""}
+        return _related_link(
+            section_name, linked, label(linked), str(linked.get("status") or "")
+        ) or {"title": title, "meta": "Unlinked", "url": ""}
+
+    if section == "landlords":
+        landlord_uid = record.get("uid")
+        if landlord_uid and getattr(g, "supabase_config", None) is not None:
+            units = _fetch_supabase_related(
+                "units", "landlord_id", landlord_uid,
+                "id,unit_number,name,title,status,is_archived",
+                order="unit_number.asc", limit=50,
+            )
+        else:
+            units = [
+                unit for unit in rows_for("properties")
+                if unit.get("landlord_id") in {landlord_uid, record.get("id")}
+            ]
+        add_group(
+            "Linked units",
+            [
+                _related_link(
+                    "properties",
+                    unit,
+                    str(unit.get("unit_number") or unit.get("name") or unit.get("title") or "Unit"),
+                    _display_status(unit.get("status")),
+                )
+                for unit in units
+            ],
+        )
+    elif section == "properties":
+        landlord_id = record.get("landlord_id")
+        if landlord_id:
+            if getattr(g, "supabase_config", None) is not None:
+                landlords = _fetch_supabase_related(
+                    "landlords", "uid", landlord_id,
+                    "id,uid,name,company_name,email,status",
+                    limit=1,
+                )
+                landlord = landlords[0] if landlords else None
+            else:
+                landlord = next(
+                    (
+                        item for item in rows_for("landlords")
+                        if str(item.get("uid") or item.get("id")) == str(landlord_id)
+                    ),
+                    None,
+                )
+            add_group(
+                "Landlord",
+                [
+                    _related_link(
+                        "landlords", landlord,
+                        str(landlord.get("name") or landlord.get("email") or "Landlord"),
+                        _display_status(landlord.get("status")),
+                    ) if landlord else {"title": "Landlord", "meta": "Unlinked", "url": ""}
+                ],
+            )
+        add_group(
+            "Assigned tenant",
+            [add_linked_record(
+                "Tenant", "tenants", "tenants", record.get("tenant_id"),
+                "id,name,email,status,is_archived,unit_id",
+                lambda item: str(item.get("name") or item.get("email") or "Tenant"),
+            )] if record.get("tenant_id") else [],
+        )
+        if getattr(g, "supabase_config", None) is not None:
+            payment_rows = _fetch_supabase_related(
+                "payments", "unit_id", record_id,
+                "id,reference_number,month,amount,status,unit_id",
+                limit=10,
+            )
+            ticket_rows = _fetch_supabase_related(
+                "maintenance_tickets", "unit_id", record_id,
+                "id,title,status,priority,unit_id",
+                limit=10,
+            )
+        else:
+            payment_rows = [row for row in rows_for("payments") if str(row.get("unit_id")) == record_id]
+            ticket_rows = [row for row in rows_for("maintenance") if str(row.get("unit_id")) == record_id]
+        add_group(
+            "Recent payments",
+            [
+                _related_link(
+                    "payments", item,
+                    str(item.get("reference_number") or item.get("month") or "Payment"),
+                    f"{currency(_number(item.get('amount')))} · {_display_status(item.get('status'))}",
+                )
+                for item in payment_rows
+            ],
+        )
+        add_group(
+            "Maintenance requests",
+            [
+                _related_link(
+                    "maintenance", item, str(item.get("title") or "Maintenance request"),
+                    f"{_display_status(item.get('priority'))} · {_display_status(item.get('status'))}",
+                )
+                for item in ticket_rows
+            ],
+        )
+    elif section == "tenants":
+        if record.get("unit_id"):
+            add_group(
+                "Assigned unit",
+                [add_linked_record(
+                    "Unit", "properties", "units", record.get("unit_id"),
+                    "id,unit_number,name,title,status,is_archived",
+                    lambda item: str(item.get("unit_number") or item.get("name") or item.get("title") or "Unit"),
+                )],
+            )
+        for table, related_section, title, fields in (
+            ("payments", "payments", "Recent payments", "id,reference_number,month,amount,status,tenant_id"),
+            ("maintenance_tickets", "maintenance", "Maintenance requests", "id,title,status,priority,tenant_id"),
+            ("tenant_inquiries", "inquiries", "Related inquiries", "id,full_name,status,created_at,tenant_id"),
+        ):
+            if getattr(g, "supabase_config", None) is not None:
+                items = _fetch_supabase_related(
+                    table, "tenant_id", record_id, fields, limit=10
+                )
+            else:
+                items = [
+                    item for item in rows_for(related_section)
+                    if str(item.get("tenant_id")) == record_id
+                ]
+            add_group(
+                title,
+                [
+                    _related_link(
+                        related_section, item,
+                        str(item.get("reference_number") or item.get("title") or item.get("full_name") or item.get("month") or "Record"),
+                        _display_status(item.get("status")),
+                    )
+                    for item in items
+                ],
+            )
+    elif section == "payments":
+        for title, related_section, table, related_id, fields, label in (
+            ("Unit", "properties", "units", record.get("unit_id"), "id,unit_number,name,title,status,is_archived", lambda item: str(item.get("unit_number") or item.get("name") or item.get("title") or "Unit")),
+            ("Tenant", "tenants", "tenants", record.get("tenant_id"), "id,name,email,status,is_archived", lambda item: str(item.get("name") or item.get("email") or "Tenant")),
+        ):
+            if related_id:
+                add_group(title, [add_linked_record(title, related_section, table, related_id, fields, label)])
+    elif section == "maintenance":
+        for title, related_section, table, related_id, fields, label in (
+            ("Unit", "properties", "units", record.get("unit_id"), "id,unit_number,name,title,status,is_archived", lambda item: str(item.get("unit_number") or item.get("name") or item.get("title") or "Unit")),
+            ("Tenant", "tenants", "tenants", record.get("tenant_id"), "id,name,email,status,is_archived", lambda item: str(item.get("name") or item.get("email") or "Tenant")),
+        ):
+            if related_id:
+                add_group(title, [add_linked_record(title, related_section, table, related_id, fields, label)])
+        if getattr(g, "supabase_config", None) is not None:
+            comments = _fetch_supabase_related(
+                "ticket_comments", "ticket_id", record_id,
+                "id,ticket_id,message,created_at",
+                order="created_at.asc", limit=200,
+            )
+            add_group(
+                "Ticket conversation",
+                [
+                    {"title": str(comment.get("message") or "Comment"),
+                     "meta": str(comment.get("created_at") or ""),
+                     "url": ""}
+                    for comment in comments
+                ],
+            )
+    elif section == "inquiries":
+        for title, related_section, table, related_id, fields, label in (
+            ("Preferred unit", "properties", "units", record.get("preferred_unit_id"), "id,unit_number,name,title,status,is_archived", lambda item: str(item.get("unit_number") or item.get("name") or item.get("title") or "Unit")),
+            ("Assigned unit", "properties", "units", record.get("assigned_unit_id"), "id,unit_number,name,title,status,is_archived", lambda item: str(item.get("unit_number") or item.get("name") or item.get("title") or "Unit")),
+            ("Created tenant", "tenants", "tenants", record.get("tenant_id"), "id,name,email,status,is_archived", lambda item: str(item.get("name") or item.get("email") or "Tenant")),
+        ):
+            if related_id:
+                add_group(title, [add_linked_record(title, related_section, table, related_id, fields, label)])
+        if str(record.get("status") or "").casefold() == "pending" and not getattr(g, "preview_mode", True):
+            review_units = [
+                unit for unit in fetch_supabase_table("units")
+                if unit.get("is_archived") is not True
+            ]
+    elif section == "expenses":
+        if record.get("unit_id"):
+            add_group(
+                "Unit",
+                [add_linked_record(
+                    "Unit", "properties", "units", record.get("unit_id"),
+                    "id,unit_number,name,title,status,is_archived",
+                    lambda item: str(item.get("unit_number") or item.get("name") or item.get("title") or "Unit"),
+                )],
+            )
+    elif section == "documents":
+        if record.get("tenant_id"):
+            add_group(
+                "Tenant",
+                [add_linked_record(
+                    "Tenant", "tenants", "tenants", record.get("tenant_id"),
+                    "id,name,email,status,is_archived",
+                    lambda item: str(item.get("name") or item.get("email") or "Tenant"),
+                )],
+            )
+    elif section == "events":
+        for title, related_section, table, related_id, fields, label in (
+            ("Unit", "properties", "units", record.get("unit_id"),
+             "id,unit_number,name,title,status,is_archived",
+             lambda item: str(item.get("unit_number") or item.get("name") or item.get("title") or "Unit")),
+            ("Tenant", "tenants", "tenants", record.get("tenant_id"),
+             "id,name,email,status,is_archived",
+             lambda item: str(item.get("name") or item.get("email") or "Tenant")),
+            ("Maintenance request", "maintenance", "maintenance_tickets", record.get("ticket_id"),
+             "id,title,status,priority",
+             lambda item: str(item.get("title") or "Maintenance request")),
+        ):
+            if related_id:
+                add_group(
+                    title,
+                    [add_linked_record(
+                        title, related_section, table, related_id, fields, label
+                    )],
+                )
+    elif section == "rfid-access":
+        for title, related_section, table, related_id, fields, label in (
+            ("Unit", "properties", "units", record.get("unit_id"),
+             "id,unit_number,name,title,status,is_archived",
+             lambda item: str(item.get("unit_number") or item.get("name") or item.get("title") or "Unit")),
+            ("Tenant", "tenants", "tenants", record.get("tenant_id"),
+             "id,name,email,status,is_archived",
+             lambda item: str(item.get("name") or item.get("email") or "Tenant")),
+        ):
+            if related_id:
+                add_group(
+                    title,
+                    [add_linked_record(
+                        title, related_section, table, related_id, fields, label
+                    )],
+                )
+    elif section == "notifications":
+        entity_types = {
+            "unit": ("properties", "units", "id,unit_number,name,title,status,is_archived",
+                     lambda item: str(item.get("unit_number") or item.get("name") or item.get("title") or "Unit")),
+            "units": ("properties", "units", "id,unit_number,name,title,status,is_archived",
+                      lambda item: str(item.get("unit_number") or item.get("name") or item.get("title") or "Unit")),
+            "tenant": ("tenants", "tenants", "id,name,email,status,is_archived",
+                       lambda item: str(item.get("name") or item.get("email") or "Tenant")),
+            "tenants": ("tenants", "tenants", "id,name,email,status,is_archived",
+                        lambda item: str(item.get("name") or item.get("email") or "Tenant")),
+            "payment": ("payments", "payments", "id,reference_number,month,amount,status",
+                        lambda item: str(item.get("reference_number") or item.get("month") or "Payment")),
+            "payments": ("payments", "payments", "id,reference_number,month,amount,status",
+                         lambda item: str(item.get("reference_number") or item.get("month") or "Payment")),
+            "maintenance": ("maintenance", "maintenance_tickets", "id,title,status,priority",
+                            lambda item: str(item.get("title") or "Maintenance request")),
+            "maintenance_ticket": ("maintenance", "maintenance_tickets", "id,title,status,priority",
+                                   lambda item: str(item.get("title") or "Maintenance request")),
+            "event": ("events", "events", "id,title,date,type,is_completed",
+                      lambda item: str(item.get("title") or "Event")),
+            "events": ("events", "events", "id,title,date,type,is_completed",
+                       lambda item: str(item.get("title") or "Event")),
+        }
+        related = entity_types.get(str(record.get("entity_type") or "").casefold())
+        if related and record.get("entity_id"):
+            related_section, table, fields, label = related
+            add_group(
+                "Related record",
+                [add_linked_record(
+                    "Related record", related_section, table,
+                    record.get("entity_id"), fields, label,
+                )],
+            )
+
+    edit_url = None
+    if section == "landlords" and str(record.get("status") or "").casefold() != "archived":
+        edit_url = url_for("landlord_form", landlord_id=record_id)
+    elif section == "properties" and record.get("is_archived") is not True:
+        edit_url = url_for("property_form", record_id=record_id)
+    elif section == "tenants" and record.get("is_archived") is not True:
+        edit_url = url_for("tenant_form", record_id=record_id)
+    elif section == "superadmins":
+        edit_url = url_for("superadmin_form", account_id=record_id)
+    elif section == "expenses":
+        edit_url = url_for("expense_form", record_id=record_id)
+    elif section == "announcements" and record.get("is_archived") is not True:
+        edit_url = url_for("announcement_form", record_id=record_id)
+    elif section == "settings":
+        edit_url = url_for("settings_form", record_id=record_id)
+    record_label = (
+        record.get("unit_number") or record.get("name") or record.get("title")
+        or record.get("reference_number") or record.get("full_name")
+        or record.get("display_name") or record.get("email") or record_id
+    )
+    return render_template(
+        "record_detail.html",
+        section=section,
+        section_title=SECTIONS[section]["title"],
+        record=record,
+        record_label=record_label,
+        detail_groups=_detail_groups(section, record),
+        related_groups=related_groups,
+        edit_url=edit_url,
+        review_units=review_units,
+        can_review=(
+            section == "inquiries"
+            and str(record.get("status") or "").casefold() == "pending"
+            and not getattr(g, "preview_mode", True)
+        ),
+    )
+
+
+@app.route("/settings/<record_id>/edit", methods=["GET", "POST"])
+def settings_form(record_id: str):
+    record = _fetch_supabase_record(
+        "settings", record_id, DETAIL_FIELDS["settings"]
+    ) if getattr(g, "supabase_config", None) is not None else next(
+        (row for row in rows_for("settings") if str(row.get("id")) == record_id),
+        None,
+    )
+    if record is None:
+        abort(404)
+    if request.method == "GET":
+        return render_template("settings_form.html", record=record)
+    if record.get("updated_at") and request.form.get("updated_at", "") != str(
+        record.get("updated_at")
+    ):
+        abort(409, description="Settings changed after you opened this page. Reload before saving.")
+
+    values: dict[str, Any] = {}
+    for key, label in (
+        ("default_late_fee", "Default late fee"),
+        ("water_rate", "Water rate"),
+        ("electricity_rate", "Electricity rate"),
+    ):
+        raw_value = request.form.get(key, "").strip()
+        try:
+            value = float(raw_value)
+        except ValueError:
+            abort(400, description=f"Enter a valid {label.lower()}.")
+        if not math.isfinite(value) or value < 0:
+            abort(400, description=f"{label} cannot be negative.")
+        values[key] = int(value) if value.is_integer() else value
+
+    due_day = request.form.get("default_due_day", "").strip()
+    if not re.fullmatch(r"\d{1,2}", due_day) or not 1 <= int(due_day) <= 31:
+        abort(400, description="Due day must be a whole number from 1 to 31.")
+    values["default_due_day"] = int(due_day)
+
+    for key in ("auto_late_fee_enabled", "auto_backup_enabled", "dark_mode"):
+        value = request.form.get(key, "")
+        if value not in {"true", "false"}:
+            abort(400, description=f"Choose a valid value for {key.replace('_', ' ')}.")
+        values[key] = value == "true"
+
+    for key, label, maximum in (
+        ("landlord_name", "Landlord name", 160),
+        ("landlord_role", "Landlord role", 100),
+        ("landlord_contact", "Landlord contact", 254),
+    ):
+        value = request.form.get(key, "").strip()
+        if len(value) > maximum:
+            abort(400, description=f"{label} must be {maximum} characters or fewer.")
+        values[key] = value or None
+
+    if getattr(g, "supabase_config", None) is None:
+        with get_db() as db:
+            updated = {**record, **values, "updated_at": datetime.now(timezone.utc).isoformat()}
+            db.execute(
+                "UPDATE records SET data = ? WHERE section = ? AND id = ?",
+                (_json_dumps(updated), "settings", record_id),
+            )
+    else:
+        query = {"id": f"eq.{record_id}", "select": "id"}
+        if record.get("updated_at"):
+            query["updated_at"] = f"eq.{record.get('updated_at')}"
+        result = supabase_backend.api_request(
+            g.supabase_config,
+            g.authenticated["access_token"],
+            "settings",
+            method="PATCH",
+            query=query,
+            body=values,
+            prefer="return=representation",
+        )
+        if not result:
+            abort(409, description="Settings changed or could not be saved. Reload and try again.")
+    flash("Settings saved.", "success")
+    return redirect(url_for("record_detail", section="settings", record_id=record_id))
+
+
+@app.post("/inquiries/<record_id>/review")
+def review_inquiry(record_id: str):
+    if getattr(g, "supabase_config", None) is None:
+        abort(503, description="Inquiry review requires a live Supabase connection.")
+    inquiry = _fetch_supabase_record(
+        "tenant_inquiries", record_id, DETAIL_FIELDS["inquiries"]
+    )
+    if inquiry is None:
+        abort(404)
+    if str(inquiry.get("status") or "").casefold() != "pending":
+        abort(409, description="Only pending inquiries can be reviewed.")
+    decision = request.form.get("decision", "").strip()
+    if decision not in {"approve", "decline"}:
+        abort(400, description="Choose approve or decline.")
+    assigned_unit_id = request.form.get("assigned_unit_id", "").strip() or None
+    internal_note = request.form.get("internal_note", "").strip()
+    if len(internal_note) > 2000:
+        abort(400, description="The internal note must be 2,000 characters or fewer.")
+    if assigned_unit_id:
+        assigned_unit = _fetch_supabase_record(
+            "units", assigned_unit_id, "id,is_archived,unit_number,name,title"
+        )
+        if assigned_unit is None or assigned_unit.get("is_archived") is True:
+            abort(400, description="Choose an existing, non-archived unit.")
+    supabase_backend.rpc_request(
+        g.supabase_config,
+        g.authenticated["access_token"],
+        "review_tenant_inquiry",
+        {
+            "p_inquiry_id": record_id,
+            "p_decision": decision,
+            "p_assigned_unit_id": assigned_unit_id,
+            "p_internal_note": internal_note,
+        },
+    )
+    flash(
+        "Inquiry approved through the existing review workflow."
+        if decision == "approve"
+        else "Inquiry declined through the existing review workflow.",
+        "success",
+    )
+    return redirect(url_for("record_detail", section="inquiries", record_id=record_id))
+
+
+@app.get("/favicon.ico")
+def favicon():
+    return redirect(url_for("static", filename="favicon.svg"))
+
+
+@app.get("/<section>/export.csv")
+def export_csv(section: str):
+    if section not in SECTIONS:
+        abort(404)
+    rows, _, _ = filtered_rows(section)
+    rows, _, _ = sorted_rows(section, rows)
+    columns = SECTIONS[section]["columns"]
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([label for _, label in columns])
+    for row in rows:
+        writer.writerow([_safe_csv_cell(row.get(key, "")) for key, _ in columns])
+    response = make_response("\ufeff" + output.getvalue())
+    response.headers["Content-Type"] = "text/csv; charset=utf-8"
+    response.headers["Content-Disposition"] = f"attachment; filename={section}.csv"
+    return response
+
+
+def _safe_csv_cell(value: Any) -> Any:
+    if isinstance(value, str) and value.lstrip(" \t\r\n").startswith(
+        ("=", "+", "-", "@")
+    ):
+        return "'" + value
+    return value
+
+
+ENTITY_FORM_FIELDS = {
+    "properties": [
+        {"key": "unit_number", "label": "Unit number", "required": True, "max_length": 100},
+        {"key": "name", "label": "Property name", "required": True, "max_length": 160},
+        {"key": "location", "label": "Location", "max_length": 240},
+        {"key": "landlord_id", "label": "Landlord", "kind": "select", "max_length": 80},
+        {"key": "monthly_rent", "label": "Monthly rent", "kind": "number", "min": "0", "help": "Enter the monthly amount in PHP."},
+        {"key": "status", "label": "Status", "required": True, "kind": "select", "options": ["Occupied", "Vacant", "Reserved", "Inactive"]},
+    ],
+    "tenants": [
+        {"key": "name", "label": "Full name", "required": True, "max_length": 100},
+        {"key": "email", "label": "Email", "kind": "email", "max_length": 254},
+        {"key": "phone", "label": "Phone", "max_length": 40},
+        {"key": "unit_id", "label": "Property", "kind": "select", "max_length": 80},
+        {"key": "landlord_id", "label": "Landlord", "kind": "select", "max_length": 80},
+        {"key": "status", "label": "Status", "required": True, "kind": "select", "options": ["Active", "Former"]},
+        {"key": "monthly_rent", "label": "Monthly rent", "kind": "number", "min": "0", "help": "Enter the monthly amount in PHP."},
+        {"key": "lease_start", "label": "Lease starts", "kind": "date", "min_date": "2025-01-01", "help": "Select a date on or after January 1, 2025."},
+        {"key": "lease_end", "label": "Lease ends", "kind": "date", "min_date": "2025-01-01", "help": "Select a date on or after January 1, 2025."},
+        {"key": "balance", "label": "Balance", "kind": "number", "min": "0", "help": "Enter the outstanding balance in PHP."},
+    ],
+    "expenses": [
+        {"key": "title", "label": "Expense", "required": True, "max_length": 160},
+        {"key": "category", "label": "Category", "required": True, "max_length": 80},
+        {"key": "amount", "label": "Amount", "required": True, "kind": "number", "min": "0", "help": "Enter the expense amount in PHP."},
+        {"key": "date", "label": "Date", "required": True, "kind": "date", "min_date": "2025-01-01", "help": "Select a date on or after January 1, 2025."},
+        {"key": "unit_number", "label": "Unit number", "max_length": 100},
+        {"key": "notes", "label": "Notes", "kind": "textarea", "max_length": 2000},
+    ],
+    "announcements": [
+        {"key": "title", "label": "Title", "required": True, "max_length": 160},
+        {"key": "message", "label": "Message", "required": True, "kind": "textarea", "max_length": 5000},
+        {"key": "category", "label": "Category", "max_length": 80},
+        {"key": "is_important", "label": "Mark as important", "kind": "boolean"},
+    ],
+}
+
+
+def _find_entity(section: str, record_id: str) -> dict[str, Any] | None:
+    if section not in ENTITY_TABLES:
+        abort(404)
+    if getattr(g, "supabase_config", None) is None:
+        return next(
+            (row for row in rows_for(section) if str(row.get("id")) == record_id),
+            None,
+        )
+    result = supabase_backend.api_request(
+        g.supabase_config,
+        g.authenticated["access_token"],
+        ENTITY_TABLES[section],
+        query={"select": ENTITY_FIELDS[section], "id": f"eq.{record_id}", "limit": "1"},
+    )
+    return dict(result[0]) if result else None
+
+
+def _entity_form_values(section: str, record: dict[str, Any] | None = None) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    for field in ENTITY_FORM_FIELDS[section]:
+        key = field["key"]
+        value = request.form.get(key, "").strip()
+        if field.get("required") and not value:
+            abort(400, description=f"{field['label']} is required.")
+        if len(value) > field.get("max_length", 500):
+            abort(400, description=f"{field['label']} is too long.")
+        if (
+            field.get("options")
+            and value
+            and value not in field["options"]
+            and value != (record or {}).get(key)
+        ):
+            abort(400, description=f"Choose a valid {field['label'].lower()}.")
+        if field.get("kind") == "boolean":
+            if value not in {"true", "false", ""}:
+                abort(400, description=f"Choose a valid {field['label'].lower()} value.")
+            values[key] = value == "true"
+            continue
+        if key == "email" and value and not _valid_email_address(value):
+            abort(400, description="Enter a valid email address.")
+        if field.get("kind") == "number":
+            if not value:
+                values[key] = None
+                continue
+            try:
+                number = float(value)
+            except ValueError:
+                abort(400, description=f"Enter a valid {field['label'].lower()}.")
+            if not math.isfinite(number) or number < 0:
+                abort(400, description=f"{field['label']} cannot be negative.")
+            values[key] = int(number) if number.is_integer() else number
+            continue
+        if field.get("kind") == "date" and value:
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+                abort(400, description=f"Enter a valid {field['label'].lower()} date.")
+            try:
+                selected_date = date.fromisoformat(value)
+            except ValueError:
+                abort(400, description=f"Enter a valid {field['label'].lower()} date.")
+            if selected_date < MIN_ENTRY_DATE and value != str(
+                (record or {}).get(key) or ""
+            ):
+                abort(400, description=f"{field['label']} must be on or after 2025-01-01.")
+        values[key] = value.lower() if key == "email" and value else value or None
+    for key, section_name, label in (
+        ("landlord_id", "landlords", "landlord"),
+        ("unit_id", "properties", "property"),
+    ):
+        value = values.get(key)
+        if not value:
+            continue
+        if record and str(record.get(key) or "") == str(value):
+            continue
+        allowed = rows_for(section_name)
+        match = next(
+            (
+                row for row in allowed
+                if str(row.get("uid") or row.get("id") or "") == str(value)
+            ),
+            None,
+        )
+        if match is None or match.get("is_archived") is True or str(
+            match.get("status", "")
+        ).casefold() == "archived":
+            abort(400, description=f"Choose an active {label} from the list.")
+    start = values.get("lease_start")
+    end = values.get("lease_end")
+    if start and end and end < start:
+        abort(400, description="Lease end must be on or after the lease start.")
+    return values
+
+
+def _render_entity_form(section: str, record: dict[str, Any] | None, status: int = 200):
+    landlords = rows_for("landlords") if section in {"properties", "tenants"} else []
+    properties = rows_for("properties") if section == "tenants" else []
+    return render_template(
+        "entity_form.html",
+        section=section,
+        title={
+            "properties": "property",
+            "tenants": "tenant",
+            "expenses": "expense",
+            "announcements": "announcement",
+        }[section],
+        fields=ENTITY_FORM_FIELDS[section],
+        record=record,
+        landlords=landlords,
+        properties=properties,
+        new_record_id=str(uuid4()) if record is None else "",
+    ), status
+
+
+@app.route("/properties/new", methods=["GET", "POST"])
+@app.route("/properties/<record_id>/edit", methods=["GET", "POST"])
+def property_form(record_id: str | None = None):
+    return entity_form("properties", record_id)
+
+
+@app.route("/tenants/new", methods=["GET", "POST"])
+@app.route("/tenants/<record_id>/edit", methods=["GET", "POST"])
+def tenant_form(record_id: str | None = None):
+    return entity_form("tenants", record_id)
+
+
+@app.route("/expenses/new", methods=["GET", "POST"])
+@app.route("/expenses/<record_id>/edit", methods=["GET", "POST"])
+def expense_form(record_id: str | None = None):
+    return entity_form("expenses", record_id)
+
+
+@app.route("/announcements/new", methods=["GET", "POST"])
+@app.route("/announcements/<record_id>/edit", methods=["GET", "POST"])
+def announcement_form(record_id: str | None = None):
+    return entity_form("announcements", record_id)
+
+
+def entity_form(section: str, record_id: str | None = None):
+    record = _find_entity(section, record_id) if record_id is not None else None
+    if record_id is not None and record is None:
+        abort(404)
+    if record and record.get("is_archived") is True:
+        abort(409, description="Archived records are read-only.")
+    if request.method == "GET":
+        return _render_entity_form(section, record)
+
+    values = _entity_form_values(section, record)
+    is_preview = g.supabase_config is None
+    if record is None:
+        record_id = request.form.get("record_id", "").strip() or str(uuid4())
+        try:
+            UUID(record_id)
+        except ValueError:
+            abort(400, description="The record identifier is invalid.")
+        values["id"] = record_id
+    if section == "properties":
+        values.pop("monthly_rent", None) if values.get("monthly_rent") is None else None
+        if values.get("monthly_rent") is not None:
+            values["rent"] = values["monthly_rent"]
+    elif section == "tenants":
+        values.pop("monthly_rent", None) if values.get("monthly_rent") is None else None
+    elif section == "expenses":
+        if record is None:
+            profile = getattr(g, "current_user", None) or {}
+            values["recorded_by"] = (
+                profile.get("display_name") or profile.get("email") or "Administrator"
+            )
+        else:
+            values["recorded_by"] = record.get("recorded_by")
+    elif section == "announcements":
+        if record is None:
+            profile = getattr(g, "current_user", None) or {}
+            values["author"] = (
+                profile.get("display_name") or profile.get("email") or "Administrator"
+            )
+            values["is_archived"] = False
+        else:
+            values["author"] = record.get("author")
+            values["is_archived"] = record.get("is_archived") is True
+
+    if is_preview:
+        with get_db() as db:
+            if record is None:
+                db.execute(
+                    "INSERT INTO records (section, id, data) VALUES (?, ?, ?)",
+                    (section, record_id, _json_dumps(values)),
+                )
+            else:
+                current = {**record, **values}
+                db.execute(
+                    "UPDATE records SET data = ? WHERE section = ? AND id = ?",
+                    (_json_dumps(current), section, record_id),
+                )
+    else:
+        if record is None and g.offline_replay:
+            existing = _find_entity(section, record_id)
+            if existing is not None:
+                if all(existing.get(key) == value for key, value in values.items() if key != "id"):
+                    flash("Record was already synchronized.", "success")
+                    return redirect(url_for("records_page", section=section))
+                abort(409, description="A record with this identifier already exists.")
+        if record is not None:
+            version = request.form.get("updated_at", "")
+            current_version = str(record.get("updated_at") or "")
+            if current_version and version != current_version:
+                abort(409, description="This record changed after you opened it. Reload before saving.")
+        if (
+            section == "announcements"
+            and record is not None
+            and record.get("is_archived") is True
+        ):
+            abort(409, description="Archived announcements are read-only.")
+        result = supabase_backend.api_request(
+            g.supabase_config,
+            g.authenticated["access_token"],
+            ENTITY_TABLES[section],
+            method="POST" if record is None else "PATCH",
+            query=(
+                {"select": "id"}
+                if record is None
+                else {
+                    "id": f"eq.{record_id}",
+                    **(
+                        {"updated_at": f"eq.{record.get('updated_at')}"}
+                        if record.get("updated_at")
+                        else {}
+                    ),
+                    "select": "id",
+                }
+            ),
+            body=values,
+            prefer="return=representation",
+        )
+        if not result:
+            abort(409, description="The record changed or could not be saved. Refresh and try again.")
+    flash(f"{SECTIONS[section]['title'].rstrip('s')} saved.", "success")
+    return redirect(url_for("records_page", section=section))
+
+
+@app.post("/properties/<record_id>/archive")
+def archive_property(record_id: str):
+    return archive_entity("properties", record_id)
+
+
+@app.post("/tenants/<record_id>/archive")
+def archive_tenant(record_id: str):
+    return archive_entity("tenants", record_id)
+
+
+@app.post("/announcements/<record_id>/archive")
+def archive_announcement(record_id: str):
+    if g.supabase_config is None:
+        record = _find_entity("announcements", record_id)
+        if record is None:
+            abort(404)
+        if record.get("is_archived") is True:
+            abort(409, description="This announcement is already archived.")
+        record["is_archived"] = True
+        with get_db() as db:
+            db.execute(
+                "UPDATE records SET data = ? WHERE section = ? AND id = ?",
+                (_json_dumps(record), "announcements", record_id),
+            )
+    else:
+        record = _find_entity("announcements", record_id)
+        if record is None:
+            abort(404)
+        if record.get("is_archived") is True:
+            abort(409, description="This announcement is already archived.")
+        result = supabase_backend.api_request(
+            g.supabase_config,
+            g.authenticated["access_token"],
+            "announcements",
+            method="PATCH",
+            query={
+                "id": f"eq.{record_id}",
+                "is_archived": "eq.false",
+                "select": "id",
+            },
+            body={"is_archived": True},
+            prefer="return=representation",
+        )
+        if not result:
+            abort(409, description="The announcement changed or could not be archived.")
+    flash("Announcement archived. Its history remains available.", "success")
+    return redirect(url_for("records_page", section="announcements"))
+
+
+def archive_entity(section: str, record_id: str):
+    record = _find_entity(section, record_id)
+    if record is None:
+        abort(404)
+    if record.get("is_archived") is True:
+        abort(409, description="This record is already archived.")
+    expected_version = request.form.get("updated_at", "")
+    current_version = str(record.get("updated_at") or "")
+    if current_version and expected_version != current_version:
+        abort(409, description="This record changed while it was offline. Reload before retrying.")
+    if g.supabase_config is None:
+        record["is_archived"] = True
+        record["status"] = "Archived"
+        with get_db() as db:
+            db.execute(
+                "UPDATE records SET data = ? WHERE section = ? AND id = ?",
+                (_json_dumps(record), section, record_id),
+            )
+    else:
+        query = {"id": f"eq.{record_id}", "is_archived": "eq.false", "select": "id"}
+        if record.get("updated_at"):
+            query["updated_at"] = f"eq.{record.get('updated_at')}"
+        result = supabase_backend.api_request(
+            g.supabase_config,
+            g.authenticated["access_token"],
+            ENTITY_TABLES[section],
+            method="PATCH",
+            query=query,
+            body={"is_archived": True},
+            prefer="return=representation",
+        )
+        if not result:
+            abort(409, description="The record changed or could not be archived. Refresh and try again.")
+    flash("Record archived. Its history remains unchanged.", "success")
+    return redirect(url_for("records_page", section=section))
+
+
+@app.get("/properties/<record_id>/door-lock")
+def unit_door_lock(record_id: str):
+    if g.supabase_config is None:
+        abort(503, description="Door status requires a live Supabase connection.")
+    unit = _find_entity("properties", record_id)
+    if unit is None:
+        abort(404)
+    return render_template("door_lock.html", unit=unit)
+
+
+@app.route("/superadmins/new", methods=["GET", "POST"])
+@app.route("/superadmins/<account_id>/edit", methods=["GET", "POST"])
+def superadmin_form(account_id: str | None = None):
+    if g.supabase_config is None:
+        abort(503, description="Superadmin accounts require a live Supabase connection.")
+    account = None
+    if account_id:
+        account = next(
+            (row for row in rows_for("superadmins") if str(row.get("id")) == account_id),
+            None,
+        )
+        if account is None:
+            abort(404)
+    if request.method == "POST":
+        name = request.form.get("display_name", "").strip()
+        if len(name) < 2 or len(name) > 100:
+            flash("Display name must contain 2 to 100 characters.", "error")
+            return render_template("superadmin_form.html", account=account), 400
+        if account is None:
+            email = request.form.get("email", "").strip().lower()
+            if not _valid_email_address(email):
+                flash("Enter a valid email address up to 254 characters.", "error")
+                return render_template("superadmin_form.html", account=None), 400
+            try:
+                supabase_backend.invoke_function(
+                    g.supabase_config,
+                    g.authenticated["access_token"],
+                    "invite-admin-account",
+                    {"email": email, "display_name": name, "role": "super_admin"},
+                )
+            except supabase_backend.SupabaseRequestError as error:
+                app.logger.warning(
+                    "Superadmin invitation failed with status %s and code %s.",
+                    error.status,
+                    error.code or "unknown",
+                )
+                flash(
+                    error.user_message or "The superadmin invitation could not be sent.",
+                    "error",
+                )
+                return render_template("superadmin_form.html", account=None), (
+                    error.status if 400 <= error.status < 500 else 503
+                )
+            flash("Superadmin invitation sent. Access remains disabled until approved.", "success")
+        else:
+            version = request.form.get("updated_at", "")
+            current_version = str(account.get("updated_at") or "")
+            if current_version and version != current_version:
+                abort(409, description="This superadmin profile changed while it was offline.")
+            result = supabase_backend.api_request(
+                g.supabase_config,
+                g.authenticated["access_token"],
+                "users",
+                method="PATCH",
+                query={
+                    "id": f"eq.{account_id}",
+                    "role": "eq.super_admin",
+                    **({"updated_at": f"eq.{account.get('updated_at')}"} if account.get("updated_at") else {}),
+                    "select": "id",
+                },
+                body={"display_name": name},
+                prefer="return=representation",
+            )
+            if not result:
+                abort(409, description="The superadmin profile could not be updated.")
+            flash("Superadmin profile updated.", "success")
+        return redirect(url_for("records_page", section="superadmins"))
+    return render_template("superadmin_form.html", account=account)
+
+
+@app.post("/superadmins/<account_id>/approval")
+def update_superadmin_approval(account_id: str):
+    if g.supabase_config is None:
+        abort(503, description="Superadmin accounts require a live Supabase connection.")
+    account = next(
+        (row for row in rows_for("superadmins") if str(row.get("id")) == account_id),
+        None,
+    )
+    if account is None:
+        abort(404)
+    approved = request.form.get("approved") == "true"
+    expected_version = request.form.get("updated_at", "")
+    current_version = str(account.get("updated_at") or "")
+    if current_version and expected_version != current_version:
+        abort(409, description="This superadmin account changed while it was offline.")
+    if not approved and account.get("uid") == g.current_user.get("uid"):
+        abort(409, description="You cannot disable your own superadmin account.")
+    if not approved:
+        active = [
+            row for row in rows_for("superadmins")
+            if row.get("is_approved") is True
+        ]
+        if len(active) <= 1:
+            abort(409, description="At least one approved superadmin must remain.")
+    result = supabase_backend.api_request(
+        g.supabase_config,
+        g.authenticated["access_token"],
+        "users",
+        method="PATCH",
+        query={
+            "id": f"eq.{account_id}",
+            "role": "eq.super_admin",
+            **({"updated_at": f"eq.{account.get('updated_at')}"} if account.get("updated_at") else {}),
+            "select": "id",
+        },
+        body={"is_approved": approved},
+        prefer="return=representation",
+    )
+    if not result:
+        abort(409, description="The account approval could not be updated.")
+    flash("Superadmin access updated.", "success")
+    return redirect(url_for("records_page", section="superadmins"))
+
+
+@app.post("/tenants/<tenant_id>/invite")
+def invite_tenant(tenant_id: str):
+    if g.supabase_config is None:
+        abort(503, description="Tenant invitations require a live Supabase connection.")
+    tenant = _find_entity("tenants", tenant_id)
+    if tenant is None:
+        abort(404)
+    if tenant.get("is_archived") is True:
+        abort(409, description="Archived tenant records cannot receive invitations.")
+    email = str(tenant.get("email") or "").strip().lower()
+    if not email:
+        abort(400, description="Add an email address before inviting this tenant.")
+    try:
+        supabase_backend.invoke_function(
+            g.supabase_config,
+            g.authenticated["access_token"],
+            "invite-admin-account",
+            {
+                "email": email,
+                "display_name": tenant.get("name") or email.split("@")[0],
+                "role": "tenant",
+                "tenant_id": tenant_id,
+                "phone": tenant.get("phone") or "",
+            },
+        )
+    except supabase_backend.SupabaseRequestError as error:
+        app.logger.warning(
+            "Tenant invitation failed with status %s and code %s.",
+            error.status,
+            error.code or "unknown",
+        )
+        flash(error.user_message or "The tenant invitation could not be sent.", "error")
+        return redirect(url_for("records_page", section="tenants"))
+    flash("Tenant invitation sent.", "success")
+    return redirect(url_for("records_page", section="tenants"))
+
+
+@app.route("/landlords/new", methods=["GET", "POST"])
+@app.route("/landlords/<landlord_id>/edit", methods=["GET", "POST"])
+def landlord_form(landlord_id: str | None = None):
+    landlord = None
+    if landlord_id is not None:
+        landlord = _find_landlord(landlord_id)
+        if landlord is None:
+            abort(404)
+        if str(landlord.get("status", "")).casefold() == "archived":
+            abort(409, description="Archived landlord records are read-only.")
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        company = request.form.get("company", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        phone = request.form.get("phone", "").strip()
+        if (
+            len(name) < 2 or len(name) > 100 or not company or len(company) > 120
+            or len(email) > 254 or len(phone) > 40
+        ):
+            flash("Enter a name (2 to 100 characters), company (up to 120), valid email, and phone (up to 40).", "error")
+            return render_template("landlord_form.html", landlord=landlord), 400
+        if landlord is None and not _valid_email_address(email):
+            flash("Enter a valid email address.", "error")
+            return render_template("landlord_form.html", landlord=landlord), 400
+        if g.supabase_config is not None:
+            if landlord is None:
+                try:
+                    supabase_backend.invoke_function(
+                        g.supabase_config,
+                        g.authenticated["access_token"],
+                        "invite-admin-account",
+                        {
+                            "email": email,
+                            "display_name": name,
+                            "role": "landlord",
+                            "company_name": company,
+                            "phone": phone,
+                        },
+                    )
+                except supabase_backend.SupabaseRequestError as error:
+                    app.logger.warning(
+                        "Landlord invitation failed with status %s and code %s.",
+                        error.status,
+                        error.code or "unknown",
+                    )
+                    flash(
+                        error.user_message
+                        or "The invitation could not be sent. Check the Supabase invitation function.",
+                        "error",
+                    )
+                    return render_template("landlord_form.html", landlord=None), (
+                        error.status if 400 <= error.status < 500 else 503
+                    )
+                flash("Landlord invitation sent. They will receive an account activation email.", "success")
+            else:
+                version = request.form.get("updated_at", "")
+                current_version = str(landlord.get("updated_at") or "")
+                if current_version and version != current_version:
+                    abort(409, description="This landlord profile changed while it was offline.")
+                result = supabase_backend.api_request(
+                    g.supabase_config,
+                    g.authenticated["access_token"],
+                    "landlords",
+                    method="PATCH",
+                    query={
+                        "uid": f"eq.{landlord['uid']}",
+                        **({"updated_at": f"eq.{landlord.get('updated_at')}"} if landlord.get("updated_at") else {}),
+                        "select": "id",
+                    },
+                    body={"name": name, "company_name": company, "phone": phone},
+                    prefer="return=representation",
+                )
+                if not result:
+                    abort(409, description="The landlord could not be updated. Check access policies and refresh.")
+                flash("Landlord profile updated.", "success")
+            return redirect(url_for("records_page", section="landlords"))
+        try:
+            with get_db() as db:
+                if landlord is None:
+                    db.execute(
+                        """INSERT INTO landlords
+                           (name, company, email, phone, status, created_at)
+                           VALUES (?, ?, ?, ?, 'Invited', ?)""",
+                        (name, company, email, phone, date.today().isoformat()),
+                    )
+                else:
+                    db.execute(
+                        """UPDATE landlords SET name = ?, company = ?, phone = ?
+                           WHERE id = ?""",
+                        (name, company, phone, landlord_id),
+                    )
+        except sqlite3.IntegrityError:
+            flash("That email address is already assigned to a landlord.", "error")
+            return render_template("landlord_form.html", landlord=landlord), 400
+        flash("Landlord saved to the local preview.", "success")
+        return redirect(url_for("records_page", section="landlords"))
+    return render_template("landlord_form.html", landlord=landlord)
+
+
+def _find_landlord(landlord_id: str) -> dict[str, Any] | None:
+    if g.supabase_config is not None:
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", landlord_id):
+            return None
+        matches = supabase_backend.api_request(
+            g.supabase_config,
+            g.authenticated["access_token"],
+            "landlords",
+            query={
+                "select": "id,uid,name,company_name,email,phone,status,created_at,updated_at",
+                "id": f"eq.{landlord_id}",
+                "limit": "1",
+            },
+        )
+        if not matches:
+            matches = supabase_backend.api_request(
+                g.supabase_config,
+                g.authenticated["access_token"],
+                "landlords",
+                query={
+                    "select": "id,uid,name,company_name,email,phone,status,created_at,updated_at",
+                    "uid": f"eq.{landlord_id}",
+                    "limit": "1",
+                },
+            )
+        if not matches:
+            return None
+        record = dict(matches[0])
+        record["company"] = record.get("company_name") or ""
+        record["name"] = record.get("name") or ""
+        record["status"] = _display_status(record.get("status"))
+        return record
+    if not landlord_id.isdecimal():
+        return None
+    with get_db() as db:
+        record = db.execute("SELECT * FROM landlords WHERE id = ?", (landlord_id,)).fetchone()
+    return dict(record) if record is not None else None
+
+
+LANDLORD_TRANSITIONS = {
+    "activate": ("invited", "active"),
+    "suspend": ("active", "suspended"),
+    "reactivate": ("suspended", "active"),
+}
+
+
+@app.post("/landlords/<landlord_id>/transition")
+def transition_landlord(landlord_id: str):
+    landlord = _find_landlord(landlord_id)
+    if landlord is None:
+        abort(404)
+    action = request.form.get("action", "")
+    current_status = str(landlord.get("status", "")).casefold()
+    if action == "archive":
+        if current_status == "archived":
+            abort(409, description="This landlord is already archived.")
+        transition = (current_status, "archived")
+    else:
+        transition = LANDLORD_TRANSITIONS.get(action)
+    if transition is None or current_status != transition[0]:
+        abort(409, description="That landlord status transition is not allowed.")
+    if g.supabase_config is not None:
+        expected_version = request.form.get("updated_at", "")
+        current_version = str(landlord.get("updated_at") or "")
+        if current_version and expected_version != current_version:
+            abort(409, description="This landlord changed while it was offline.")
+        result = supabase_backend.api_request(
+            g.supabase_config,
+            g.authenticated["access_token"],
+            "landlords",
+            method="PATCH",
+            query={
+                "uid": f"eq.{landlord['uid']}",
+                "status": f"eq.{transition[0]}",
+                **({"updated_at": f"eq.{landlord.get('updated_at')}"} if landlord.get("updated_at") else {}),
+                "select": "id",
+            },
+            body={"status": transition[1]},
+            prefer="return=representation",
+        )
+        if not result:
+            abort(409, description="The landlord status changed or access was denied.")
+    else:
+        with get_db() as db:
+            changed = db.execute(
+                "UPDATE landlords SET status = ? WHERE id = ? AND lower(status) = ?",
+                (transition[1].title(), landlord_id, transition[0]),
+            ).rowcount
+        if not changed:
+            abort(409, description="The landlord status changed. Refresh and try again.")
+    flash(f"Landlord account {transition[1]}.", "success")
+    return redirect(url_for("records_page", section="landlords"))
+
+
+@app.get("/login")
+@app.post("/login")
+def login():
+    if g.supabase_config is None:
+        return render_template("login.html", configuration_missing=True)
+    if g.current_user is not None:
+        return redirect(url_for("dashboard"))
+    if request.method == "POST":
+        supplied = request.form.get("csrf_token", "")
+        expected = session.get("login_csrf_token", "")
+        if not expected or not secrets.compare_digest(expected, supplied):
+            abort(400, description="The form expired. Reload the page and try again.")
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        if not _valid_email_address(email) or not password:
+            flash("Enter a valid administrator email and password.", "error")
+        else:
+            retry_after = _auth_rate_limit("login", email)
+            if retry_after:
+                g.auth_rate_limit_retry_after = retry_after
+                abort(
+                    429,
+                    description=f"Too many sign-in attempts. Try again in {retry_after} seconds.",
+                )
+            try:
+                sid, csrf_token = supabase_backend.sign_in(
+                    g.supabase_config, DATABASE, email, password
+                )
+            except supabase_backend.SupabaseRequestError as error:
+                if error.status in (400, 401):
+                    flash("Email or password is incorrect.", "error")
+                elif error.status == 403:
+                    flash("This account is not an approved RAMP super-admin.", "error")
+                elif error.status == 503:
+                    flash("Could not reach Supabase. Check your connection and try again.", "error")
+                else:
+                    app.logger.warning("Supabase sign-in failed with status %s.", error.status)
+                    flash("Supabase sign-in failed. Check the project Auth configuration.", "error")
+            else:
+                _clear_auth_rate_limit("login", email)
+                session.clear()
+                session.permanent = True
+                session["supabase_session_id"] = sid
+                session["csrf_token"] = csrf_token
+                next_path = request.form.get("next", "")
+                if (
+                    not next_path.startswith("/")
+                    or next_path.startswith("//")
+                    or "\\" in next_path
+                ):
+                    next_path = url_for("dashboard")
+                return redirect(next_path)
+    return render_template(
+        "login.html",
+        configuration_missing=False,
+        next_path=request.args.get("next", ""),
+    )
+
+
+@app.get("/login/forgot-password")
+@app.post("/login/forgot-password")
+def forgot_password():
+    if g.supabase_config is None:
+        flash("Supabase credentials are required before resetting a password.", "error")
+        return redirect(url_for("login"))
+    if g.current_user is not None:
+        return redirect(url_for("dashboard"))
+    if request.method == "POST":
+        supplied = request.form.get("csrf_token", "")
+        expected = session.get("login_csrf_token", "")
+        if not expected or not secrets.compare_digest(expected, supplied):
+            abort(400, description="The form expired. Reload the page and try again.")
+        email = request.form.get("email", "").strip().lower()
+        if not _valid_email_address(email):
+            flash("Enter a valid email address linked to your account.", "error")
+        else:
+            retry_after = _auth_rate_limit("forgot_password", email)
+            if retry_after:
+                g.auth_rate_limit_retry_after = retry_after
+                abort(
+                    429,
+                    description=f"Too many reset requests. Try again in {retry_after} seconds.",
+                )
+            try:
+                supabase_backend.request_password_reset(g.supabase_config, email)
+            except supabase_backend.SupabaseRequestError as error:
+                if error.status in (400, 404):
+                    flash(
+                        "If that email is linked to an approved RAMP account, a reset link has been sent.",
+                        "success",
+                    )
+                elif error.status == 503:
+                    flash("Could not reach Supabase. Check your connection and try again.", "error")
+                else:
+                    app.logger.warning("Password reset request failed with status %s.", error.status)
+                    flash("Password reset could not be started. Check the Auth configuration.", "error")
+            else:
+                flash(
+                    "If that email matches an approved RAMP account, a password reset link has been sent.",
+                    "success",
+                )
+        return redirect(url_for("login"))
+    return render_template("forgot_password.html")
+
+
+@app.post("/logout")
+def logout():
+    sid = session.get("supabase_session_id")
+    session.clear()
+    if sid and g.supabase_config is not None:
+        try:
+            supabase_backend.sign_out(g.supabase_config, DATABASE, sid)
+        except supabase_backend.SupabaseRequestError:
+            app.logger.exception("Supabase could not revoke the signed-in session.")
+            flash("Signed out locally; Supabase could not confirm session revocation.", "error")
+    return redirect(url_for("login"))
+
+
+@app.errorhandler(supabase_backend.SupabaseRequestError)
+def handle_supabase_error(error: supabase_backend.SupabaseRequestError):
+    app.logger.warning(
+        "Supabase request failed with status %s and code %s.",
+        error.status,
+        error.code or "unknown",
+    )
+    if error.status == 400:
+        message = "Supabase rejected the submitted values. Check the fields and database constraints."
+    elif error.status == 401:
+        message = "Your Supabase session is no longer valid. Sign in again, then retry the change."
+    elif error.status == 403:
+        message = "Supabase denied this action. Check the superadmin's access and the table's Row Level Security policies."
+    elif error.status == 404:
+        message = "The Supabase record or endpoint was not found. Check the configured schema."
+    elif error.status == 409:
+        message = "This record changed elsewhere. Reload it and try again."
+    elif error.status == 429:
+        message = "Supabase is rate-limiting requests. Wait briefly and try again."
+    else:
+        message = "Supabase could not complete the request. Check the connection and try again."
+    if request.headers.get("X-Ramp-Form-Request") == "1":
+        status = error.status if 400 <= error.status < 600 else 502
+        return jsonify({"error": message}), status
+    return (
+        render_template(
+            "backend_error.html",
+            message=message,
+        ),
+        error.status if 400 <= error.status < 600 else 502,
+    )
+
+
+@app.errorhandler(HTTPException)
+def handle_form_http_error(error: HTTPException):
+    if request.headers.get("X-Ramp-Form-Request") == "1":
+        response = jsonify({"error": error.description})
+        response.status_code = error.code or 400
+    else:
+        response = error.get_response()
+    retry_after = getattr(g, "auth_rate_limit_retry_after", None)
+    if retry_after:
+        response.headers["Retry-After"] = str(retry_after)
+    return response
+
+
+def _number(value: Any) -> float:
+    try:
+        number = float(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return number if number >= 0 else 0
+
+
+def _as_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = value.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        for format_string in ("%b %d, %Y", "%B %d, %Y"):
+            try:
+                return datetime.strptime(normalized, format_string)
+            except ValueError:
+                continue
+        return None
+    return parsed.replace(tzinfo=None) if parsed.tzinfo else parsed
+
+
+@app.get("/health")
+def health():
+    if g.supabase_config is None:
+        return {"mode": "preview", "supabase_configured": False}
+    return {"mode": "connected", "supabase_configured": True, "authenticated": bool(g.current_user)}
+
+
+@app.get("/service-worker.js")
+def service_worker():
+    response = app.send_static_file("sw.js")
+    response.headers["Service-Worker-Allowed"] = "/"
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.errorhandler(supabase_backend.SupabaseConfigurationError)
+def handle_supabase_config_error(error: supabase_backend.SupabaseConfigurationError):
+    app.logger.error("Supabase configuration error: %s", error)
+    return (
+        render_template("backend_error.html", message=str(error)),
+        503,
+    )
+
+
+@app.errorhandler(503)
+def handle_service_unavailable(error):
+    message = getattr(
+        error,
+        "description",
+        "The connected service is temporarily unavailable.",
+    )
+    if request.headers.get("X-Ramp-Form-Request") == "1":
+        return jsonify({"error": message}), 503
+    return (
+        render_template(
+            "backend_error.html",
+            message=message,
+        ),
+        503,
+    )
+
+
+if __name__ == "__main__":
+    init_db()
+    app.run(
+        host="127.0.0.1",
+        debug=os.environ.get("FLASK_DEBUG") == "1",
+        ssl_context="adhoc" if os.environ.get("RAMP_USE_LOCAL_HTTPS") == "1" else None,
+    )

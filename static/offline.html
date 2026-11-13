@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#102a55">
+  <title>Offline · RAMP Admin</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f4f7fb; color: #172b4d; font: 16px/1.5 "DM Sans", Arial, sans-serif; }
+    main { max-width: 430px; margin: 24px; padding: 32px; border: 1px solid #e1e8f1; border-radius: 16px; background: white; box-shadow: 0 16px 40px #102a5512; }
+    h1 { margin: 0 0 8px; font-size: 24px; }
+    p { margin: 0; color: #596a81; }
+    button { margin-top: 24px; min-height: 42px; padding: 0 18px; border: 0; border-radius: 8px; background: #3478ec; color: white; font: inherit; font-weight: 700; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>You're offline</h1>
+    <p>This page has not been saved on this trusted device yet. Reconnect to Supabase to load it.</p>
+    <button type="button" onclick="location.reload()">Try again</button>
+  </main>
+</body>
+</html>

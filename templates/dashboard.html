@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block breadcrumb %}Overview <span class="crumb-separator">/</span> <strong>Dashboard</strong>{% endblock %}
+{% block content %}
+<div class="page-heading dashboard-heading">
+  <div>
+    <h1>Overview</h1>
+    <p class="page-subtitle">A concise view of the portfolio and work that needs attention.</p>
+  </div>
+  <a class="button button-primary" href="{{ url_for('landlord_form') }}"><span>＋</span> Add landlord</a>
+</div>
+
+<div class="stats-grid dashboard-stats">
+  <a class="stat-card" href="{{ url_for('records_page', section='properties') }}">
+    <span class="stat-label">Active units</span>
+    <span class="stat-value">{{ stats.properties }}</span>
+    <span class="stat-foot">{{ stats.occupied_properties }} occupied · {{ stats.vacant_properties }} vacant · {{ stats.reserved_properties }} reserved</span>
+  </a>
+  <a class="stat-card" href="{{ url_for('records_page', section='inquiries', status='Pending') }}">
+    <span class="stat-label">Pending inquiries</span>
+    <span class="stat-value">{{ stats.pending_inquiries }}</span>
+    <span class="stat-foot">Open the review queue</span>
+  </a>
+  <a class="stat-card" href="{{ url_for('records_page', section='payments', status='Pending') }}">
+    <span class="stat-label">Payments pending</span>
+    <span class="stat-value">{{ stats.pending_payments }}</span>
+    <span class="stat-foot">Based on stored payment status</span>
+  </a>
+  <a class="stat-card" href="{{ url_for('records_page', section='payments', status='Overdue') }}">
+    <span class="stat-label">Payments marked overdue</span>
+    <span class="stat-value">{{ stats.overdue_payments }}</span>
+    <span class="stat-foot">No overdue status is inferred</span>
+  </a>
+  <a class="stat-card" href="{{ url_for('records_page', section='maintenance') }}">
+    <span class="stat-label">Maintenance not closed</span>
+    <span class="stat-value">{{ stats.open_tickets }}</span>
+    <span class="stat-foot">{{ stats.high_priority_tickets }} high/urgent · {{ stats.maintenance_properties }} units flagged</span>
+  </a>
+  <a class="stat-card" href="{{ url_for('records_page', section='tenants') }}">
+    <span class="stat-label">Leases ending soon</span>
+    <span class="stat-value">{{ stats.lease_ending_soon }}</span>
+    <span class="stat-foot">Active leases ending in the next 30 days</span>
+  </a>
+  <a class="stat-card" href="{{ url_for('records_page', section='payments') }}">
+    <span class="stat-label">Paid rent · {{ month_label }}</span>
+    <span class="stat-value money">{{ currency(stats.collected) }}</span>
+    <span class="stat-foot">Paid rent transactions only</span>
+  </a>
+  <a class="stat-card" href="{{ url_for('records_page', section='landlords') }}">
+    <span class="stat-label">Active landlords</span>
+    <span class="stat-value">{{ stats.landlords }}</span>
+    <span class="stat-foot">Current account status</span>
+  </a>
+</div>
+
+{% if unit_status_counts %}
+<section class="unit-status-strip" aria-label="Active unit counts by status">
+  <strong>Units by status</strong>
+  {% for unit_status, count in unit_status_counts|dictsort %}
+  <a href="{{ url_for('records_page', section='properties', status=unit_status) }}">
+    <span>{{ unit_status }}</span><b>{{ count }}</b>
+  </a>
+  {% endfor %}
+</section>
+{% endif %}
+
+<div class="dashboard-period-note">
+  <span>Rent totals use the app’s existing payment-date fallback and count each paid rent row once.</span>
+  <form method="get" class="period-filter">
+    <label for="dashboardPeriod">Rent period</label>
+    <input id="dashboardPeriod" type="month" name="period" min="2025-01" value="{{ selected_period }}">
+    <button class="button button-secondary" type="submit">Apply</button>
+  </form>
+</div>
+
+<div class="dashboard-lower-grid">
+  <section class="panel follow-up-panel">
+    <div class="panel-header"><h2>Follow up</h2></div>
+    {% if attention_items %}
+    <div class="attention-list">
+      {% for item in attention_items %}
+      <a class="attention-row" href="{{ url_for('records_page', section=item.section, status=item.status or 'All') }}">
+        <strong>{{ item.title }}</strong>
+        <span class="attention-count">{{ item.count }} {{ item.unit }}{% if item.count != 1 %}s{% endif %}</span>
+        <span class="attention-arrow" aria-hidden="true">→</span>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="follow-up-empty">Nothing needs follow-up right now.</p>
+    {% endif %}
+  </section>
+
+  <section class="panel activity-summary">
+    <div class="panel-header">
+      <div><h2>Recent activity</h2><p>From existing audit, inquiry, payment, and maintenance records.</p></div>
+      <a class="panel-link" href="{{ url_for('records_page', section='activity') }}">Audit history <b>→</b></a>
+    </div>
+    {% if recent_activity %}
+    <div class="activity-summary-list">
+      {% for item in recent_activity %}
+        {% if item.url %}
+        <a class="activity-summary-row" href="{{ item.url }}">
+          <span><strong>{{ item.title }}</strong><small>{{ item.detail or item.section|title }}</small></span>
+          <time>{{ item.occurred_label }}</time>
+        </a>
+        {% else %}
+        <div class="activity-summary-row">
+          <span><strong>{{ item.title }}</strong><small>{{ item.detail or item.section|title }}</small></span>
+          <time>{{ item.occurred_label }}</time>
+        </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="follow-up-empty">No recent records with a usable date.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

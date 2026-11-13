@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#102a55">
+  <title>Sign in · RAMP Admin</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="login-page">
+  <main class="login-layout">
+    <section class="login-brand-panel">
+      <a class="brand login-brand" href="{{ url_for('login') }}">
+        <span class="brand-mark"><span></span><span></span><span></span><span></span></span>
+        <span class="brand-copy"><strong>ramp</strong><small>SUPER ADMIN</small></span>
+      </a>
+      <div class="login-brand-message"><span class="login-orbit">⌂</span><p>PROPERTY MANAGEMENT, MADE CLEAR.</p><h1>Your entire rental portfolio,<br>in one place.</h1><span>Operations, payments, and people—working together.</span></div>
+      <span class="login-brand-footer">RAMP ADMIN · SECURE WORKSPACE</span>
+    </section>
+    <section class="login-main">
+      <div class="login-form-wrap">
+        <p class="login-kicker">WELCOME BACK</p>
+        <h2>Sign in to RAMP</h2>
+        <p class="login-subtitle">Use your approved super-admin account to continue.</p>
+        {% if supabase_connected %}<p class="login-connection"><span class="online-dot"></span> Supabase project configuration detected</p>{% endif %}
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}<div class="login-messages">{% for category, message in messages %}<div class="flash flash-{{ category }}">{{ message }}</div>{% endfor %}</div>{% endif %}
+        {% endwith %}
+        {% if configuration_missing %}
+          <div class="config-help"><strong>Supabase is not configured.</strong><p>Set <code>RAMP_SUPABASE_URL</code> and <code>RAMP_SUPABASE_PUBLISHABLE_KEY</code>, or point <code>RAMP_SUPABASE_CONFIG</code> to the Flutter app’s local config file.</p><a class="button button-secondary" href="{{ url_for('dashboard') }}">Open local preview</a></div>
+        {% else %}
+          <form method="post" class="login-form" autocomplete="on" data-loading-label="Signing in…">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="next" value="{{ next_path }}">
+            <label class="form-field"><span>Email address</span><input type="email" name="email" autocomplete="username" required autofocus placeholder="admin@company.com"></label>
+            <label class="form-field"><span>Password</span>
+              <div class="password-field">
+                <input type="password" id="password" name="password" autocomplete="current-password" required placeholder="Enter your password">
+                <button type="button" class="password-toggle" aria-label="Show password" title="Show password">
+                  <svg class="password-icon password-icon-show" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                  <svg class="password-icon password-icon-hide" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="m3 3 18 18"></path>
+                    <path d="M10.6 5.2A10.7 10.7 0 0 1 12 5c6.4 0 10 7 10 7a15.8 15.8 0 0 1-3.2 4.1M6.2 6.3C3.5 8.1 2 12 2 12s3.6 7 10 7a10.7 10.7 0 0 0 4.1-.8"></path>
+                    <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"></path>
+                  </svg>
+                </button>
+              </div>
+            </label>
+            <div class="login-links">
+              <a href="{{ url_for('forgot_password') }}">Forgot password?</a>
+            </div>
+            <button type="submit" class="button button-primary login-submit">Sign in <span>→</span></button>
+          </form>
+          <p class="login-security"><span>▣</span> Authenticated by Supabase. Only approved super-admin accounts can access this workspace.</p>
+          <script>
+            const passwordInput = document.getElementById('password');
+            const toggleButton = document.querySelector('.password-toggle');
+            if (passwordInput && toggleButton) {
+              toggleButton.addEventListener('click', () => {
+                const showPassword = passwordInput.type === 'password';
+                passwordInput.type = showPassword ? 'text' : 'password';
+                const label = showPassword ? 'Hide password' : 'Show password';
+                toggleButton.setAttribute('aria-label', label);
+                toggleButton.setAttribute('title', label);
+                toggleButton.setAttribute('aria-pressed', String(showPassword));
+              });
+            }
+          </script>
+        {% endif %}
+      </div>
+      <footer class="login-footer"><span>© {{ current_date[-4:] }} RAMP Property Management</span><span>Secure administrator access</span></footer>
+    </section>
+  </main>
+</body>
+</html>

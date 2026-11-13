@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit landlord' if landlord else 'Add landlord' }}{% endblock %}
+{% block breadcrumb %}<a href="{{ url_for('records_page', section='landlords') }}">Landlords</a> <span class="crumb-separator">/</span> <strong>{{ 'Edit profile' if landlord else 'Add landlord' }}</strong>{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div><h1>{{ 'Edit landlord' if landlord else 'Add a landlord' }}</h1></div>
+</div>
+<section class="panel form-panel">
+  <form method="post" class="landlord-form" data-loading-label="Saving…" data-confirm="{{ 'Save changes to this landlord?' if landlord else '' }}" {% if landlord %}data-offline-queue="true"{% endif %}>
+    <div class="form-section-heading"><span class="form-section-icon">♙</span><span><strong>Profile information</strong></span></div>
+    <div class="form-grid">
+      <label class="form-field"><span>Full name <b>*</b></span><input name="name" required minlength="2" maxlength="100" value="{{ landlord.name if landlord else '' }}" placeholder="e.g. Alex Santos"></label>
+      <label class="form-field"><span>Company name <b>*</b></span><input name="company" required maxlength="120" value="{{ landlord.company if landlord else '' }}" placeholder="e.g. Santos Property Group"></label>
+      <label class="form-field"><span>Email address <b>*</b></span><input type="email" name="email" {% if landlord %}readonly{% else %}required maxlength="254"{% endif %} value="{{ landlord.email if landlord else '' }}" placeholder="name@company.com"></label>
+      <label class="form-field"><span>Phone number</span><input name="phone" maxlength="40" value="{{ landlord.phone if landlord else '' }}" placeholder="+63 9XX XXX XXXX"></label>
+      {% if landlord %}<div class="form-field"><span>Account status</span><span class="form-status status-pill status-{{ landlord.status|lower }}">{{ landlord.status }}</span></div>{% endif %}
+    </div>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if landlord and landlord.updated_at %}<input type="hidden" name="updated_at" value="{{ landlord.updated_at }}">{% endif %}
+    <div class="form-note"><span>i</span><p>{% if preview_mode %}This preview saves changes to a local SQLite database. No invitation email will be sent.{% elif landlord %}Email and account status are managed separately. Saving updates the connected landlord profile.{% else %}An activation email will be sent through the configured Supabase invitation function.{% endif %}</p></div>
+    <div class="form-actions"><a class="button button-secondary" href="{{ url_for('records_page', section='landlords') }}">Cancel</a><button class="button button-primary" type="submit">{{ 'Save changes' if landlord else ('Create landlord' if preview_mode else 'Send invitation') }} <span>→</span></button></div>
+  </form>
+</section>
+{% endblock %}

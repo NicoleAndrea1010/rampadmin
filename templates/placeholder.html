@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}{{ section|replace('-', ' ')|title }}{% endblock %}
+{% block breadcrumb %}Admin workspace <span class="crumb-separator">/</span> <strong>{{ section|replace('-', ' ')|title }}</strong>{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">ADMIN WORKSPACE</p><h1>{{ section|replace('-', ' ')|title }}</h1><p class="page-subtitle">Manage the {{ section|replace('-', ' ') }} experience for your RAMP workspace.</p></div></div>
+<section class="panel placeholder-panel"><span class="placeholder-icon">✦</span><h2>This section is ready for the next step</h2><p>The original app includes this admin area. Its live controls need a connected backend and access configuration before they can be enabled here.</p><a class="button button-secondary" href="{{ url_for('dashboard') }}">Back to dashboard</a></section>
+{% endblock %}

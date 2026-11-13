@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit ' if record else 'Add ' }}{{ title }}{% endblock %}
+{% block breadcrumb %}<a href="{{ url_for('records_page', section=section) }}">{{ section|title }}</a> <span class="crumb-separator">/</span> <strong>{{ 'Edit record' if record else 'Add record' }}</strong>{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div><h1>{{ 'Edit ' if record else 'Add ' }}{{ title }}</h1></div>
+</div>
+<section class="panel form-panel">
+  <form method="post" class="landlord-form" data-loading-label="Saving…" data-confirm="{{ 'Save changes to this record?' if record else '' }}" {% if record and section in ['properties', 'tenants'] %}data-offline-queue="true"{% else %}data-requires-online="true"{% endif %}>
+    <div class="form-section-heading"><span class="form-section-icon">✎</span><span><strong>Record details</strong></span></div>
+    <div class="form-grid">
+      {% for field in fields %}
+      <label class="form-field">
+        <span>{{ field.label }}{% if field.required %} <b>*</b>{% endif %}</span>
+        {% if field.options %}
+          <select name="{{ field.key }}" {% if field.required %}required{% endif %}>
+            {% if record and record.get(field.key) and record.get(field.key) not in field.options %}
+              <option value="{{ record.get(field.key) }}" selected>Current status: {{ record.get(field.key) }}</option>
+            {% endif %}
+            {% for option in field.options %}
+              <option value="{{ option }}" {% if record and record.get(field.key) == option %}selected{% elif not record and option == ('Vacant' if section == 'properties' else 'Active') %}selected{% endif %}>{{ option }}</option>
+            {% endfor %}
+          </select>
+        {% elif field.kind == 'select' %}
+          <select name="{{ field.key }}" {% if field.required %}required{% endif %}>
+            <option value="">Unassigned</option>
+            {% if field.key == 'landlord_id' %}
+              {% for item in landlords %}
+                {% set option_id = item.uid or item.id %}
+                <option value="{{ option_id }}" {% if record and record.get(field.key)|string == option_id|string %}selected{% endif %}>{{ item.name }}{% if item.company %} · {{ item.company }}{% endif %}</option>
+              {% endfor %}
+            {% elif field.key == 'unit_id' %}
+              {% for item in properties if not item.is_archived %}
+                <option value="{{ item.id }}" {% if record and record.get(field.key)|string == item.id|string %}selected{% endif %}>{{ item.unit_number or item.name or item.id }} · {{ item.location or 'No location' }}</option>
+              {% endfor %}
+            {% endif %}
+          </select>
+        {% elif field.kind == 'boolean' %}
+          <select name="{{ field.key }}" required>
+            <option value="false" {% if not record or record.get(field.key) is not sameas true %}selected{% endif %}>No</option>
+            <option value="true" {% if record and record.get(field.key) is sameas true %}selected{% endif %}>Yes</option>
+          </select>
+        {% elif field.kind == 'textarea' %}
+          <textarea name="{{ field.key }}" {% if field.required %}required{% endif %} {% if field.max_length %}maxlength="{{ field.max_length }}"{% endif %} rows="4">{{ record.get(field.key, '') if record else '' }}</textarea>
+        {% else %}
+          <input type="{{ field.kind or 'text' }}" name="{{ field.key }}" {% if field.required %}required{% endif %} {% if field.max_length %}maxlength="{{ field.max_length }}"{% endif %} {% if field.min is defined %}min="{{ field.min }}"{% elif field.min_date is defined and (not record or not record.get(field.key) or record.get(field.key)|string >= field.min_date) %}min="{{ field.min_date }}"{% endif %} {% if field.kind == 'number' %}step="any"{% endif %} value="{{ record.get(field.key, '') if record else '' }}">
+        {% endif %}
+        {% if field.help %}<small class="form-help">{{ field.help }}</small>{% endif %}
+      </label>
+      {% endfor %}
+    </div>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if not record %}<input type="hidden" name="record_id" value="{{ new_record_id }}">{% endif %}
+    {% if record and record.get('updated_at') %}<input type="hidden" name="updated_at" value="{{ record.updated_at }}">{% endif %}
+    <div class="form-note"><span>i</span><p>Changes are saved to Supabase and remain subject to its access policies.</p></div>
+    <div class="form-actions"><a class="button button-secondary" href="{{ url_for('records_page', section=section) }}">Cancel</a><button class="button button-primary" type="submit">{{ 'Save changes' if record else 'Create record' }} <span>→</span></button></div>
+  </form>
+</section>
+{% endblock %}

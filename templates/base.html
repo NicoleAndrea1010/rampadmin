@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#102a55">
+  <title>{% block title %}RAMP Admin{% endblock %} · RAMP</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=6">
+  <link rel="stylesheet" href="{{ url_for('static', filename='polish.css') }}?v=6">
+</head>
+<body data-offline-scope="{{ current_user.uid if current_user else 'preview' }}">
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="{{ url_for('dashboard') }}">
+        <span class="brand-mark"><span></span><span></span><span></span><span></span></span>
+        <span class="brand-copy"><strong>ramp</strong><small>SUPER ADMIN</small></span>
+      </a>
+      <nav class="navigation" aria-label="Main navigation">
+        {% set group = namespace(current='') %}
+        {% for eyebrow, label, icon, key in nav_items %}
+          {% if eyebrow != group.current %}
+            {% if not loop.first %}</div></details>{% endif %}
+            {% set active_group = namespace(value=false) %}
+            {% for item in nav_items if item[0] == eyebrow %}
+              {% if (request.path == '/' and item[3] == 'dashboard') or (item[3] != 'dashboard' and request.path.startswith('/' ~ item[3])) %}
+                {% set active_group.value = true %}
+              {% endif %}
+            {% endfor %}
+            <details class="nav-group" {% if active_group.value %}open{% endif %}>
+              <summary class="nav-heading">{{ eyebrow }}</summary>
+              <div class="nav-group-links">
+            {% set group.current = eyebrow %}
+          {% endif %}
+          <a class="nav-link {% if request.path == '/' and key == 'dashboard' or request.path.startswith('/' ~ key) and key != 'dashboard' %}active{% endif %}"
+             href="{% if key == 'dashboard' %}{{ url_for('dashboard') }}{% elif key == 'connections' or key == 'access' or key == 'settings' %}{{ url_for('records_page', section=key) }}{% else %}{{ url_for('records_page', section=key) }}{% endif %}">
+            <span class="nav-icon">{{ icon }}</span>
+            <span>{{ label }}</span>
+          </a>
+        {% endfor %}
+          </div></details>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="sidebar-status"><span class="online-dot"></span><span>{{ 'Connected to Supabase' if supabase_connected else 'Preview workspace' }}</span></div>
+        <div class="identity">
+          <div class="avatar avatar-dark">{{ (current_user.display_name or current_user.email)[:1]|upper if current_user else 'P' }}</div>
+          <div class="identity-copy"><strong>{{ current_user.display_name or current_user.email if current_user else 'Preview workspace' }}</strong><small>{{ current_user.email if current_user else 'Local preview only' }}</small></div>
+          {% if current_user %}
+          <form action="{{ url_for('logout') }}" method="post" data-loading-label="Signing out…">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="icon-button sidebar-more" aria-label="Sign out">↪</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="icon-button menu-button" id="menuToggle" aria-label="Open navigation">☰</button>
+        <div class="breadcrumbs"><span>RAMP</span><span class="crumb-separator">/</span><strong>{% block breadcrumb %}Overview{% endblock %}</strong></div>
+        <form class="global-search" action="{{ url_for('global_search') }}" method="get" role="search">
+          <span class="search-icon" aria-hidden="true">⌕</span>
+          <input type="search" name="q" maxlength="120" placeholder="Search all records" aria-label="Search all records">
+        </form>
+        <details class="help-control">
+          <summary aria-label="How to use RAMP Admin" title="How to use RAMP Admin">?</summary>
+          <section class="help-panel" aria-label="RAMP Admin guide">
+            <h2>Quick guide</h2>
+            <ul>
+              <li>Use the sidebar groups to open dashboards, people, portfolio, and operations pages.</li>
+              <li>Search globally from the top bar, or use a list's filters, column headings, and page controls.</li>
+              <li>Use View for record details and Edit for supported changes. Archive keeps history; records aren't hard-deleted here.</li>
+              <li>Offline edits are queued on this device and need a later sync. Avoid shared devices for sensitive records.</li>
+              <li>Open Settings for the terms draft and property defaults. The terms are not yet a consent or sign-up flow.</li>
+            </ul>
+          </section>
+        </details>
+      </header>
+
+      <section class="page-content">
+        {% if preview_mode %}
+        <div class="preview-notice"><span class="notice-symbol">i</span><span><strong>Local preview</strong> · Not connected to Supabase.</span></div>
+        {% else %}
+        <div class="preview-notice live-notice" id="connectionNotice"><span class="notice-symbol">✓</span><span><strong>Live data</strong> · Connected to Supabase.</span></div>
+        {% endif %}
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            <div class="flash-stack">
+              {% for category, message in messages %}<div class="flash flash-{{ category }}">{{ message }}</div>{% endfor %}
+            </div>
+          {% endif %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+      </section>
+    </main>
+  </div>
+  <aside class="offline-queue" id="offlineQueue" hidden aria-live="polite">
+    <div class="offline-queue-heading"><strong id="offlineQueueTitle">Offline changes</strong><button class="table-action" id="syncOfflineChanges" type="button">Sync now</button></div>
+    <ul id="offlineQueueItems"></ul>
+  </aside>
+  <div class="mobile-scrim" id="mobileScrim"></div>
+  <div class="page-loading" id="pageLoading" hidden role="status" aria-live="polite">
+    <span class="loading-label">Loading…</span>
+    <div class="loading-skeleton" aria-hidden="true">
+      <div class="skeleton-heading"></div>
+      <div class="skeleton-cards"><i></i><i></i><i></i></div>
+      <div class="skeleton-panel">
+        <i></i><i></i><i></i><i></i>
+      </div>
+    </div>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+  <script src="{{ url_for('static', filename='app.js') }}?v=5" defer></script>
+</body>
+</html>

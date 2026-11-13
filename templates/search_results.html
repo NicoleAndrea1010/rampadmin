@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Search results{% endblock %}
+{% block breadcrumb %}Overview <span class="crumb-separator">/</span> <strong>Search</strong>{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <h1>Search results</h1>
+    {% if query %}<p class="page-subtitle">Matches for “{{ query }}” across visible admin records.</p>{% else %}<p class="page-subtitle">Search units, people, accounts, inquiries, payments, and maintenance.</p>{% endif %}
+  </div>
+</div>
+
+{% if query and results %}
+<div class="search-results">
+  {% for group in results %}
+  <section class="panel search-result-panel">
+    <div class="panel-header">
+      <h2>{{ group.title }} <span class="search-result-count">{{ group.count }}</span></h2>
+      <a class="panel-link" href="{{ group.more_url }}">View all <b>→</b></a>
+    </div>
+    <ul class="related-list">
+      {% for item in group['items'] %}
+      <li><a href="{{ item.url }}">{{ item.title }}</a>{% if item.meta %}<small>{{ item.meta }}</small>{% endif %}</li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endfor %}
+</div>
+{% elif query %}
+<section class="panel search-empty">
+  <span class="empty-icon">⌕</span>
+  <strong>No matching records</strong>
+  <small>Try another name, email, unit number, reference, or status.</small>
+</section>
+{% else %}
+<section class="panel search-empty">
+  <span class="empty-icon">⌕</span>
+  <strong>Search the admin workspace</strong>
+  <small>Enter a name, email, unit number, reference, or status in the search bar.</small>
+</section>
+{% endif %}
+{% endblock %}
