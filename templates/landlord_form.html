@@ -9,10 +9,10 @@
   <form method="post" class="landlord-form" data-loading-label="Saving…" data-confirm="{{ 'Save changes to this landlord?' if landlord else '' }}" {% if landlord %}data-offline-queue="true"{% endif %}>
     <div class="form-section-heading"><span class="form-section-icon">♙</span><span><strong>Profile information</strong></span></div>
     <div class="form-grid">
-      <label class="form-field"><span>Full name <b>*</b></span><input name="name" required minlength="2" maxlength="100" value="{{ landlord.name if landlord else '' }}" placeholder="e.g. Alex Santos"></label>
-      <label class="form-field"><span>Company name <b>*</b></span><input name="company" required maxlength="120" value="{{ landlord.company if landlord else '' }}" placeholder="e.g. Santos Property Group"></label>
-      <label class="form-field"><span>Email address <b>*</b></span><input type="email" name="email" {% if landlord %}readonly{% else %}required maxlength="254"{% endif %} value="{{ landlord.email if landlord else '' }}" placeholder="name@company.com"></label>
-      <label class="form-field"><span>Phone number</span><input name="phone" maxlength="40" value="{{ landlord.phone if landlord else '' }}" placeholder="+63 9XX XXX XXXX"></label>
+      <label class="form-field"><span>Full name <b>*</b></span><input name="name" required minlength="2" maxlength="100" value="{{ form_values.get('name', landlord.name if landlord else '') }}" placeholder="e.g. Alex Santos"></label>
+      <label class="form-field"><span>Company name <b>*</b></span><input name="company" required maxlength="120" value="{{ form_values.get('company', landlord.company if landlord else '') }}" placeholder="e.g. Santos Property Group"></label>
+      <label class="form-field"><span>Email address <b>*</b></span><input type="email" name="email" {% if landlord %}readonly{% else %}required maxlength="254"{% endif %} value="{{ form_values.get('email', landlord.email if landlord else '') }}" placeholder="name@company.com"></label>
+      <label class="form-field"><span>Phone number</span><input name="phone" maxlength="40" value="{{ form_values.get('phone', landlord.phone if landlord else '') }}" placeholder="+63 9XX XXX XXXX"></label>
       {% if landlord %}<div class="form-field"><span>Account status</span><span class="form-status status-pill status-{{ landlord.status|lower }}">{{ landlord.status }}</span></div>{% endif %}
     </div>
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

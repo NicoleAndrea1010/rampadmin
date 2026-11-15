@@ -2064,18 +2064,7 @@ def record_detail(section: str, record_id: str):
     )
 
 
-@app.route("/settings/<record_id>/edit", methods=["GET", "POST"])
-def settings_form(record_id: str):
-    record = _fetch_supabase_record(
-        "settings", record_id, DETAIL_FIELDS["settings"]
-    ) if getattr(g, "supabase_config", None) is not None else next(
-        (row for row in rows_for("settings") if str(row.get("id")) == record_id),
-        None,
-    )
-    if record is None:
-        abort(404)
-    if request.method == "GET":
-        return render_template("settings_form.html", record=record)
+def _settings_form_values(record: dict[str, Any]) -> dict[str, Any]:
     if record.get("updated_at") and request.form.get("updated_at", "") != str(
         record.get("updated_at")
     ):
@@ -2116,6 +2105,30 @@ def settings_form(record_id: str):
         if len(value) > maximum:
             abort(400, description=f"{label} must be {maximum} characters or fewer.")
         values[key] = value or None
+    return values
+
+
+@app.route("/settings/<record_id>/edit", methods=["GET", "POST"])
+def settings_form(record_id: str):
+    record = _fetch_supabase_record(
+        "settings", record_id, DETAIL_FIELDS["settings"]
+    ) if getattr(g, "supabase_config", None) is not None else next(
+        (row for row in rows_for("settings") if str(row.get("id")) == record_id),
+        None,
+    )
+    if record is None:
+        abort(404)
+    if request.method == "GET":
+        return render_template("settings_form.html", record=record, form_values={})
+    try:
+        values = _settings_form_values(record)
+    except HTTPException as error:
+        return render_template(
+            "settings_form.html",
+            record=record,
+            form_values=dict(request.form),
+            form_error=error.description,
+        ), error.code or 400
 
     if getattr(g, "supabase_config", None) is None:
         with get_db() as db:
@@ -2128,17 +2141,35 @@ def settings_form(record_id: str):
         query = {"id": f"eq.{record_id}", "select": "id"}
         if record.get("updated_at"):
             query["updated_at"] = f"eq.{record.get('updated_at')}"
-        result = supabase_backend.api_request(
-            g.supabase_config,
-            g.authenticated["access_token"],
-            "settings",
-            method="PATCH",
-            query=query,
-            body=values,
-            prefer="return=representation",
-        )
+        try:
+            result = supabase_backend.api_request(
+                g.supabase_config,
+                g.authenticated["access_token"],
+                "settings",
+                method="PATCH",
+                query=query,
+                body=values,
+                prefer="return=representation",
+            )
+        except supabase_backend.SupabaseRequestError as error:
+            app.logger.warning(
+                "Settings update failed with status %s and code %s.",
+                error.status,
+                error.code or "unknown",
+            )
+            return render_template(
+                "settings_form.html",
+                record=record,
+                form_values=dict(request.form),
+                form_error=error.user_message or "Settings could not be saved. Try again.",
+            ), error.status if 400 <= error.status < 500 else 503
         if not result:
-            abort(409, description="Settings changed or could not be saved. Reload and try again.")
+            return render_template(
+                "settings_form.html",
+                record=record,
+                form_values=dict(request.form),
+                form_error="Settings changed or could not be saved. Reload and try again.",
+            ), 409
     flash("Settings saved.", "success")
     return redirect(url_for("record_detail", section="settings", record_id=record_id))
 
@@ -2348,7 +2379,14 @@ def _entity_form_values(section: str, record: dict[str, Any] | None = None) -> d
     return values
 
 
-def _render_entity_form(section: str, record: dict[str, Any] | None, status: int = 200):
+def _render_entity_form(
+    section: str,
+    record: dict[str, Any] | None,
+    status: int = 200,
+    form_values: dict[str, str] | None = None,
+    form_error: str | None = None,
+):
+    submitted_values = form_values or {}
     landlords = rows_for("landlords") if section in {"properties", "tenants"} else []
     properties = rows_for("properties") if section == "tenants" else []
     return render_template(
@@ -2364,7 +2402,13 @@ def _render_entity_form(section: str, record: dict[str, Any] | None, status: int
         record=record,
         landlords=landlords,
         properties=properties,
-        new_record_id=str(uuid4()) if record is None else "",
+        form_values=submitted_values,
+        form_error=form_error,
+        new_record_id=(
+            submitted_values.get("record_id") or str(uuid4())
+            if record is None
+            else ""
+        ),
     ), status
 
 
@@ -2401,15 +2445,26 @@ def entity_form(section: str, record_id: str | None = None):
     if request.method == "GET":
         return _render_entity_form(section, record)
 
-    values = _entity_form_values(section, record)
+    try:
+        values = _entity_form_values(section, record)
+        if record is None:
+            record_id = request.form.get("record_id", "").strip() or str(uuid4())
+            try:
+                UUID(record_id)
+            except ValueError:
+                abort(400, description="The record identifier is invalid.")
+            values["id"] = record_id
+    except HTTPException as error:
+        if request.headers.get("X-Ramp-Form-Request") == "1":
+            return jsonify(error=error.description), error.code or 400
+        return _render_entity_form(
+            section,
+            record,
+            error.code or 400,
+            dict(request.form),
+            error.description,
+        )
     is_preview = g.supabase_config is None
-    if record is None:
-        record_id = request.form.get("record_id", "").strip() or str(uuid4())
-        try:
-            UUID(record_id)
-        except ValueError:
-            abort(400, description="The record identifier is invalid.")
-        values["id"] = record_id
     if section == "properties":
         values.pop("monthly_rent", None) if values.get("monthly_rent") is None else None
         if values.get("monthly_rent") is not None:
@@ -2607,12 +2662,20 @@ def superadmin_form(account_id: str | None = None):
         name = request.form.get("display_name", "").strip()
         if len(name) < 2 or len(name) > 100:
             flash("Display name must contain 2 to 100 characters.", "error")
-            return render_template("superadmin_form.html", account=account), 400
+            return render_template(
+                "superadmin_form.html",
+                account=account,
+                form_values=dict(request.form),
+            ), 400
         if account is None:
             email = request.form.get("email", "").strip().lower()
             if not _valid_email_address(email):
                 flash("Enter a valid email address up to 254 characters.", "error")
-                return render_template("superadmin_form.html", account=None), 400
+                return render_template(
+                    "superadmin_form.html",
+                    account=None,
+                    form_values=dict(request.form),
+                ), 400
             try:
                 supabase_backend.invoke_function(
                     g.supabase_config,
@@ -2630,9 +2693,11 @@ def superadmin_form(account_id: str | None = None):
                     error.user_message or "The superadmin invitation could not be sent.",
                     "error",
                 )
-                return render_template("superadmin_form.html", account=None), (
-                    error.status if 400 <= error.status < 500 else 503
-                )
+                return render_template(
+                    "superadmin_form.html",
+                    account=None,
+                    form_values=dict(request.form),
+                ), error.status if 400 <= error.status < 500 else 503
             flash("Superadmin invitation sent. Access remains disabled until approved.", "success")
         else:
             version = request.form.get("updated_at", "")
@@ -2657,7 +2722,7 @@ def superadmin_form(account_id: str | None = None):
                 abort(409, description="The superadmin profile could not be updated.")
             flash("Superadmin profile updated.", "success")
         return redirect(url_for("records_page", section="superadmins"))
-    return render_template("superadmin_form.html", account=account)
+    return render_template("superadmin_form.html", account=account, form_values={})
 
 
 @app.post("/superadmins/<account_id>/approval")
@@ -2761,10 +2826,18 @@ def landlord_form(landlord_id: str | None = None):
             or len(email) > 254 or len(phone) > 40
         ):
             flash("Enter a name (2 to 100 characters), company (up to 120), valid email, and phone (up to 40).", "error")
-            return render_template("landlord_form.html", landlord=landlord), 400
+            return render_template(
+                "landlord_form.html",
+                landlord=landlord,
+                form_values=dict(request.form),
+            ), 400
         if landlord is None and not _valid_email_address(email):
             flash("Enter a valid email address.", "error")
-            return render_template("landlord_form.html", landlord=landlord), 400
+            return render_template(
+                "landlord_form.html",
+                landlord=landlord,
+                form_values=dict(request.form),
+            ), 400
         if g.supabase_config is not None:
             if landlord is None:
                 try:
@@ -2791,9 +2864,11 @@ def landlord_form(landlord_id: str | None = None):
                         or "The invitation could not be sent. Check the Supabase invitation function.",
                         "error",
                     )
-                    return render_template("landlord_form.html", landlord=None), (
-                        error.status if 400 <= error.status < 500 else 503
-                    )
+                    return render_template(
+                        "landlord_form.html",
+                        landlord=None,
+                        form_values=dict(request.form),
+                    ), error.status if 400 <= error.status < 500 else 503
                 flash("Landlord invitation sent. They will receive an account activation email.", "success")
             else:
                 version = request.form.get("updated_at", "")
@@ -2834,10 +2909,14 @@ def landlord_form(landlord_id: str | None = None):
                     )
         except sqlite3.IntegrityError:
             flash("That email address is already assigned to a landlord.", "error")
-            return render_template("landlord_form.html", landlord=landlord), 400
+            return render_template(
+                "landlord_form.html",
+                landlord=landlord,
+                form_values=dict(request.form),
+            ), 400
         flash("Landlord saved to the local preview.", "success")
         return redirect(url_for("records_page", section="landlords"))
-    return render_template("landlord_form.html", landlord=landlord)
+    return render_template("landlord_form.html", landlord=landlord, form_values={})
 
 
 def _find_landlord(landlord_id: str) -> dict[str, Any] | None:
@@ -2941,6 +3020,7 @@ def login():
         return render_template("login.html", configuration_missing=True)
     if g.current_user is not None:
         return redirect(url_for("dashboard"))
+    email = ""
     if request.method == "POST":
         supplied = request.form.get("csrf_token", "")
         expected = session.get("login_csrf_token", "")
@@ -2990,6 +3070,7 @@ def login():
         "login.html",
         configuration_missing=False,
         next_path=request.args.get("next", ""),
+        email=email,
     )
 
 

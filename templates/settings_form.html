@@ -7,17 +7,19 @@
 </div>
 <section class="panel form-panel">
   <form method="post" class="landlord-form" data-requires-online="true" data-confirm="Save these settings to Supabase?" data-loading-label="Saving…">
+    {% if form_error %}<p class="form-error" role="alert">{{ form_error }}</p>{% endif %}
     <div class="form-section-heading"><span class="form-section-icon">⚙</span><span><strong>Property defaults</strong></span></div>
     <div class="form-grid">
-      <label class="form-field"><span>Default late fee</span><input type="number" name="default_late_fee" min="0" step="any" required value="{{ record.default_late_fee }}"></label>
-      <label class="form-field"><span>Default due day</span><input type="number" name="default_due_day" min="1" max="31" step="1" required value="{{ record.default_due_day }}"></label>
-      <label class="form-field"><span>Water rate</span><input type="number" name="water_rate" min="0" step="any" required value="{{ record.water_rate }}"></label>
-      <label class="form-field"><span>Electricity rate</span><input type="number" name="electricity_rate" min="0" step="any" required value="{{ record.electricity_rate }}"></label>
-      <label class="form-field"><span>Landlord name</span><input type="text" name="landlord_name" maxlength="160" value="{{ record.landlord_name or '' }}"></label>
-      <label class="form-field"><span>Landlord role</span><input type="text" name="landlord_role" maxlength="100" value="{{ record.landlord_role or '' }}"></label>
-      <label class="form-field"><span>Landlord contact</span><input type="text" name="landlord_contact" maxlength="254" value="{{ record.landlord_contact or '' }}"></label>
+      <label class="form-field"><span>Default late fee</span><input type="number" name="default_late_fee" min="0" step="any" required value="{{ form_values.get('default_late_fee', record.default_late_fee) }}"></label>
+      <label class="form-field"><span>Default due day</span><input type="number" name="default_due_day" min="1" max="31" step="1" required value="{{ form_values.get('default_due_day', record.default_due_day) }}"></label>
+      <label class="form-field"><span>Water rate</span><input type="number" name="water_rate" min="0" step="any" required value="{{ form_values.get('water_rate', record.water_rate) }}"></label>
+      <label class="form-field"><span>Electricity rate</span><input type="number" name="electricity_rate" min="0" step="any" required value="{{ form_values.get('electricity_rate', record.electricity_rate) }}"></label>
+      <label class="form-field"><span>Landlord name</span><input type="text" name="landlord_name" maxlength="160" value="{{ form_values.get('landlord_name', record.landlord_name or '') }}"></label>
+      <label class="form-field"><span>Landlord role</span><input type="text" name="landlord_role" maxlength="100" value="{{ form_values.get('landlord_role', record.landlord_role or '') }}"></label>
+      <label class="form-field"><span>Landlord contact</span><input type="text" name="landlord_contact" maxlength="254" value="{{ form_values.get('landlord_contact', record.landlord_contact or '') }}"></label>
       {% for key, label in [('auto_late_fee_enabled', 'Automatic late fee'), ('auto_backup_enabled', 'Automatic backup'), ('dark_mode', 'Dark mode')] %}
-      <label class="form-field"><span>{{ label }}</span><select name="{{ key }}" required><option value="true" {% if record.get(key) is sameas true %}selected{% endif %}>Enabled</option><option value="false" {% if record.get(key) is not sameas true %}selected{% endif %}>Disabled</option></select></label>
+      {% set setting_value = form_values.get(key, 'true' if record.get(key) is sameas true else 'false') %}
+      <label class="form-field"><span>{{ label }}</span><select name="{{ key }}" required><option value="true" {% if setting_value == 'true' %}selected{% endif %}>Enabled</option><option value="false" {% if setting_value == 'false' %}selected{% endif %}>Disabled</option></select></label>
       {% endfor %}
     </div>
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

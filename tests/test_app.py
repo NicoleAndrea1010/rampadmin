@@ -467,9 +467,15 @@ class RampAdminWebTests(unittest.TestCase):
         ):
             response = self.client.post(
                 "/settings/settings-main/edit",
-                data={"csrf_token": "live-csrf", "updated_at": "2026-01-01T00:00:00+00:00"},
+                data={
+                    "csrf_token": "live-csrf",
+                    "updated_at": "2026-01-01T00:00:00+00:00",
+                    "default_due_day": "99",
+                },
             )
         self.assertEqual(response.status_code, 409)
+        self.assertIn(b"Settings changed after you opened this page.", response.data)
+        self.assertIn(b'value="99"', response.data)
         request_api.assert_not_called()
 
     def test_document_and_rfid_loaders_do_not_select_private_identifiers_or_urls(self):
@@ -743,6 +749,22 @@ class RampAdminWebTests(unittest.TestCase):
             },
         )
         self.assertEqual(earlier_than_allowed.status_code, 400)
+
+    def test_entity_validation_renders_server_error_and_preserves_input(self):
+        response = self.client.post(
+            "/properties/new",
+            data={
+                "csrf_token": self.csrf_token(),
+                "record_id": str(uuid4()),
+                "unit_number": "A-12",
+                "name": "Harbor House",
+                "status": "Invalid",
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b'class="form-error" role="alert"', response.data)
+        self.assertIn(b'value="Harbor House"', response.data)
+        self.assertIn(b'value="Invalid" selected', response.data)
 
     def test_date_inputs_enforce_2025_minimum(self):
         response = self.client.get("/tenants/new")

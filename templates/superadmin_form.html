@@ -9,8 +9,8 @@
   <form method="post" class="landlord-form" data-loading-label="{{ 'Saving…' if account else 'Sending invitation…' }}" data-confirm="{{ 'Save changes to this superadmin?' if account else '' }}" {% if account %}data-offline-queue="true"{% endif %}>
     <div class="form-section-heading"><span class="form-section-icon">♧</span><span><strong>Account details</strong></span></div>
     <div class="form-grid">
-      <label class="form-field"><span>Full name <b>*</b></span><input name="display_name" required minlength="2" maxlength="100" value="{{ account.display_name if account else '' }}"></label>
-      <label class="form-field"><span>Email address <b>*</b></span><input type="email" name="email" required maxlength="254" value="{{ account.email if account else '' }}" {% if account %}readonly{% endif %}></label>
+      <label class="form-field"><span>Full name <b>*</b></span><input name="display_name" required minlength="2" maxlength="100" value="{{ form_values.get('display_name', account.display_name if account else '') }}"></label>
+      <label class="form-field"><span>Email address <b>*</b></span><input type="email" name="email" required maxlength="254" value="{{ form_values.get('email', account.email if account else '') }}" {% if account %}readonly{% endif %}></label>
       {% if account %}<div class="form-field"><span>Account access</span><span class="form-status status-pill status-{{ account.status|lower }}">{{ account.status }}</span></div>{% endif %}
     </div>
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

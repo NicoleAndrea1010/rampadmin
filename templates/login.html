@@ -9,7 +9,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=8">
+  <link rel="stylesheet" href="{{ url_for('static', filename='polish.css') }}?v=10">
 </head>
 <body class="login-page">
   <main class="login-layout">
@@ -36,7 +37,7 @@
           <form method="post" class="login-form" autocomplete="on" data-loading-label="Signing in…">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="next" value="{{ next_path }}">
-            <label class="form-field"><span>Email address</span><input type="email" name="email" autocomplete="username" required autofocus placeholder="admin@company.com"></label>
+            <label class="form-field"><span>Email address</span><input type="email" name="email" autocomplete="username" required autofocus value="{{ email or '' }}" placeholder="admin@company.com"></label>
             <label class="form-field"><span>Password</span>
               <div class="password-field">
                 <input type="password" id="password" name="password" autocomplete="current-password" required placeholder="Enter your password">
@@ -78,5 +79,6 @@
       <footer class="login-footer"><span>© {{ current_date[-4:] }} RAMP Property Management</span><span>Secure administrator access</span></footer>
     </section>
   </main>
+  <script src="{{ url_for('static', filename='form-ux.js') }}?v=2" defer></script>
 </body>
 </html>

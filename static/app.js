@@ -105,23 +105,22 @@ function showMessage(message, kind = "info") {
   }
   const notice = document.createElement("div");
   notice.className = `flash flash-${kind}`;
-  notice.setAttribute("role", "status");
+  notice.setAttribute("role", kind === "error" ? "alert" : "status");
   notice.textContent = message;
+  window.rampFormUX.addDismissButton(notice);
   stack.replaceChildren(notice);
 }
 
 function showFormError(form, message) {
-  const error = document.createElement("p");
-  error.className = "form-error";
-  error.setAttribute("role", "alert");
-  error.textContent = message;
-  const dialog = form.closest("dialog");
-  if (dialog) {
-    dialog.querySelector(".form-error")?.remove();
-    form.prepend(error);
-  } else {
-    showMessage(message, "error");
-  }
+  window.rampFormUX.showFormError(form, message);
+}
+
+function prepareFormValidation(form) {
+  window.rampFormUX.prepareFormValidation(form);
+}
+
+function setFormSubmitting(form, isSubmitting, submitter = null) {
+  window.rampFormUX.setSubmitting(form, isSubmitting, submitter);
 }
 
 async function responseErrorMessage(response) {
@@ -277,6 +276,7 @@ function openRecordEditor(section, href, record = null) {
   form.append(actions);
   dialog.append(heading, form);
   document.body.append(dialog);
+  prepareFormValidation(form);
   dialog.addEventListener("close", () => dialog.remove(), { once: true });
   dialog.showModal();
   form.querySelector("input:not([type=hidden])")?.focus();
@@ -389,9 +389,13 @@ function addPendingRow(section, recordId, values) {
   const row = document.createElement("tr");
   row.dataset.recordId = recordId;
   row.className = "row-pending-sync";
-  for (const [key] of columns) {
+  for (const [key, label] of columns) {
     const cell = document.createElement("td");
     cell.dataset.field = key;
+    cell.dataset.label = label;
+    if (["rent", "monthly_rent", "amount", "balance"].includes(key)) {
+      cell.dataset.numeric = "true";
+    }
     cell.textContent = rowData[key] || "—";
     if (key === "status") {
       const pill = document.createElement("span");
@@ -403,6 +407,7 @@ function addPendingRow(section, recordId, values) {
   }
   const action = document.createElement("td");
   action.className = "row-actions";
+  action.dataset.label = "Actions";
   const edit = document.createElement("a");
   edit.className = "table-action";
   edit.href = `/${section}/${encodeURIComponent(recordId)}/edit`;
@@ -503,14 +508,9 @@ async function queueForm(form, scope) {
   await renderPending(scope);
 }
 
-async function sendForm(form, scope) {
+async function sendForm(form, scope, submitter = null) {
   const values = new URLSearchParams(new FormData(form));
-  const submitButton = form.querySelector('button[type="submit"], button:not([type])');
-  const originalLabel = submitButton?.textContent;
-  if (submitButton) {
-    submitButton.disabled = true;
-    if (form.dataset.loadingLabel) submitButton.textContent = form.dataset.loadingLabel;
-  }
+  setFormSubmitting(form, true, submitter);
   form.setAttribute("aria-busy", "true");
   try {
     if (!navigator.onLine) throw new TypeError("Browser is offline");
@@ -545,10 +545,7 @@ async function sendForm(form, scope) {
   } finally {
     if (form.isConnected) {
       form.removeAttribute("aria-busy");
-      if (submitButton) {
-        submitButton.disabled = false;
-        if (originalLabel !== undefined) submitButton.textContent = originalLabel;
-      }
+      setFormSubmitting(form, false);
     }
   }
 }
@@ -716,7 +713,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!(event.target instanceof Element)) return;
     const discard = event.target.closest("[data-discard-change]");
     if (discard) {
-      if (!window.confirm("Discard this unsynced change?")) return;
+      const confirmation = "Discard this unsynced change? It will be removed from this device and will not sync to Supabase.";
+      if (!window.confirm(confirmation)) return;
       removePending(discard.dataset.discardChange)
         .then(() => renderPending(scope))
         .catch(() => showMessage("The pending change could not be discarded.", "error"));
@@ -760,11 +758,7 @@ document.addEventListener("DOMContentLoaded", () => {
       event.preventDefault();
       return;
     }
-    const submitButton = form.querySelector('button[type="submit"], button:not([type])');
-    if (submitButton) {
-      submitButton.disabled = true;
-      if (form.dataset.loadingLabel) submitButton.textContent = form.dataset.loadingLabel;
-    }
+    setFormSubmitting(form, true, event.submitter);
     form.setAttribute("aria-busy", "true");
     showLoading();
   });
@@ -779,7 +773,7 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     event.preventDefault();
-    await sendForm(form, scope);
+    await sendForm(form, scope, event.submitter);
   }, { capture: true });
 
   document.addEventListener("click", (event) => {
@@ -828,8 +822,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  const notice = document.querySelector(".flash");
-  if (notice) window.setTimeout(() => notice.classList.add("flash-dismissed"), 4000);
 });
 
 window.addEventListener("pageshow", () => {

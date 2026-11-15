@@ -7,43 +7,47 @@
 </div>
 <section class="panel form-panel">
   <form method="post" class="landlord-form" data-loading-label="Saving…" data-confirm="{{ 'Save changes to this record?' if record else '' }}" {% if record and section in ['properties', 'tenants'] %}data-offline-queue="true"{% else %}data-requires-online="true"{% endif %}>
+    {% if form_error %}<p class="form-error" role="alert">{{ form_error }}</p>{% endif %}
     <div class="form-section-heading"><span class="form-section-icon">✎</span><span><strong>Record details</strong></span></div>
     <div class="form-grid">
       {% for field in fields %}
+      {% set submitted = field.key in form_values %}
+      {% set field_value = form_values.get(field.key, record.get(field.key, '') if record else '') %}
       <label class="form-field">
         <span>{{ field.label }}{% if field.required %} <b>*</b>{% endif %}</span>
         {% if field.options %}
           <select name="{{ field.key }}" {% if field.required %}required{% endif %}>
-            {% if record and record.get(field.key) and record.get(field.key) not in field.options %}
-              <option value="{{ record.get(field.key) }}" selected>Current status: {{ record.get(field.key) }}</option>
+            {% if field_value and field_value not in field.options %}
+              <option value="{{ field_value }}" selected>Current status: {{ field_value }}</option>
             {% endif %}
             {% for option in field.options %}
-              <option value="{{ option }}" {% if record and record.get(field.key) == option %}selected{% elif not record and option == ('Vacant' if section == 'properties' else 'Active') %}selected{% endif %}>{{ option }}</option>
+              <option value="{{ option }}" {% if field_value == option %}selected{% elif not submitted and not record and option == ('Vacant' if section == 'properties' else 'Active') %}selected{% endif %}>{{ option }}</option>
             {% endfor %}
           </select>
         {% elif field.kind == 'select' %}
           <select name="{{ field.key }}" {% if field.required %}required{% endif %}>
-            <option value="">Unassigned</option>
+            <option value="" {% if not field_value %}selected{% endif %}>Unassigned</option>
             {% if field.key == 'landlord_id' %}
               {% for item in landlords %}
                 {% set option_id = item.uid or item.id %}
-                <option value="{{ option_id }}" {% if record and record.get(field.key)|string == option_id|string %}selected{% endif %}>{{ item.name }}{% if item.company %} · {{ item.company }}{% endif %}</option>
+                <option value="{{ option_id }}" {% if field_value|string == option_id|string %}selected{% endif %}>{{ item.name }}{% if item.company %} · {{ item.company }}{% endif %}</option>
               {% endfor %}
             {% elif field.key == 'unit_id' %}
               {% for item in properties if not item.is_archived %}
-                <option value="{{ item.id }}" {% if record and record.get(field.key)|string == item.id|string %}selected{% endif %}>{{ item.unit_number or item.name or item.id }} · {{ item.location or 'No location' }}</option>
+                <option value="{{ item.id }}" {% if field_value|string == item.id|string %}selected{% endif %}>{{ item.unit_number or item.name or item.id }} · {{ item.location or 'No location' }}</option>
               {% endfor %}
             {% endif %}
           </select>
         {% elif field.kind == 'boolean' %}
+          {% set boolean_value = 'true' if field_value is sameas true or field_value == 'true' else 'false' if field_value is sameas false or field_value == 'false' or not field_value else field_value|string %}
           <select name="{{ field.key }}" required>
-            <option value="false" {% if not record or record.get(field.key) is not sameas true %}selected{% endif %}>No</option>
-            <option value="true" {% if record and record.get(field.key) is sameas true %}selected{% endif %}>Yes</option>
+            <option value="false" {% if boolean_value == 'false' %}selected{% endif %}>No</option>
+            <option value="true" {% if boolean_value == 'true' %}selected{% endif %}>Yes</option>
           </select>
         {% elif field.kind == 'textarea' %}
-          <textarea name="{{ field.key }}" {% if field.required %}required{% endif %} {% if field.max_length %}maxlength="{{ field.max_length }}"{% endif %} rows="4">{{ record.get(field.key, '') if record else '' }}</textarea>
+          <textarea name="{{ field.key }}" {% if field.required %}required{% endif %} {% if field.max_length %}maxlength="{{ field.max_length }}"{% endif %} rows="4">{{ field_value }}</textarea>
         {% else %}
-          <input type="{{ field.kind or 'text' }}" name="{{ field.key }}" {% if field.required %}required{% endif %} {% if field.max_length %}maxlength="{{ field.max_length }}"{% endif %} {% if field.min is defined %}min="{{ field.min }}"{% elif field.min_date is defined and (not record or not record.get(field.key) or record.get(field.key)|string >= field.min_date) %}min="{{ field.min_date }}"{% endif %} {% if field.kind == 'number' %}step="any"{% endif %} value="{{ record.get(field.key, '') if record else '' }}">
+          <input type="{{ field.kind or 'text' }}" name="{{ field.key }}" {% if field.required %}required{% endif %} {% if field.max_length %}maxlength="{{ field.max_length }}"{% endif %} {% if field.min is defined %}min="{{ field.min }}"{% elif field.min_date is defined and (not record or not record.get(field.key) or record.get(field.key)|string >= field.min_date) %}min="{{ field.min_date }}"{% endif %} {% if field.kind == 'number' %}step="any"{% endif %} value="{{ field_value }}">
         {% endif %}
         {% if field.help %}<small class="form-help">{{ field.help }}</small>{% endif %}
       </label>
