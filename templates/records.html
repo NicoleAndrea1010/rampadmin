@@ -46,7 +46,7 @@
       {% for row in rows %}
         <tr data-record-id="{{ row.id }}">
           {% for key, label in config.columns %}
-            <td data-field="{{ key }}" data-label="{{ label }}">
+            <td data-field="{{ key }}" data-label="{{ label }}"{% if key in ['rent', 'monthly_rent', 'amount', 'balance'] %} data-numeric="true"{% endif %}>
               {% if key == 'status' %}
                 <span class="status-pill status-{{ row[key]|lower|replace(' ', '-') }}">{{ row[key] }}</span>
               {% elif key == 'name' and section == 'landlords' %}

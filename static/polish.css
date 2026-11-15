@@ -287,13 +287,16 @@ form[aria-busy="true"] { cursor: progress; }
   padding: 4px 0 22px;
   border-bottom: 1px solid #e6ecf4;
 }
-.dashboard-heading h1::before {
+.dashboard-kicker {
   margin-bottom: 7px;
   display: block;
   color: #7487a2;
-  content: "PORTFOLIO OVERVIEW";
   font: 700 10px "DM Sans", sans-serif;
   letter-spacing: .13em;
+  text-transform: uppercase;
+}
+.dashboard-heading h1::before {
+  content: none;
 }
 .dashboard-heading .page-subtitle { max-width: 560px; }
 .dashboard-heading > .button { box-shadow: 0 6px 16px rgba(40, 111, 227, .2); }
@@ -353,7 +356,7 @@ form[aria-busy="true"] { cursor: progress; }
     align-items: flex-start;
     padding-bottom: 17px;
   }
-  .dashboard-heading h1::before { font-size: 9px; }
+  .dashboard-kicker { font-size: 9px; }
   .dashboard-heading .button { align-self: flex-end; }
   .dashboard-stats { gap: 11px; }
   .dashboard-stats .stat-card {
@@ -715,4 +718,62 @@ select:focus-visible, textarea:focus-visible, summary:focus-visible {
   .period-filter input { min-width: 0; flex: 1; }
   .detail-grid { grid-template-columns: 1fr; gap: 12px; }
   .detail-related { grid-template-columns: 1fr; }
+}
+
+.sidebar { width: 240px; }
+.main { width: calc(100% - 240px); margin-left: 240px; }
+.page-loading { inset: 0 0 0 240px; }
+.topbar { height: 56px; padding-right: 24px; padding-left: 24px; }
+.page-content { max-width: 1440px; padding: 24px; }
+.dashboard-lower-grid { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+.detail-related { position: sticky; top: 72px; }
+.data-table td { font-variant-numeric: tabular-nums; }
+.data-table td[data-numeric="true"] { text-align: right; }
+a:focus-visible, button:focus-visible, input:focus-visible,
+select:focus-visible, textarea:focus-visible, summary:focus-visible {
+  outline-width: 2px;
+  outline-offset: 2px;
+}
+
+@media (max-width: 1200px) {
+  .sidebar { width: 240px; }
+  .main { width: calc(100% - 240px); margin-left: 240px; }
+  .page-loading { inset: 0 0 0 240px; }
+}
+
+@media (max-width: 760px) {
+  .sidebar { width: min(280px, calc(100vw - 56px)); }
+  .main { width: 100%; margin-left: 0; }
+  .page-loading { inset: 0; }
+  .topbar {
+    height: auto;
+    min-height: 56px;
+    padding: 6px 16px 8px;
+  }
+  .menu-button { width: 44px; height: 44px; flex-basis: 44px; margin-left: 0; }
+  .breadcrumbs { min-height: 44px; }
+  .breadcrumbs > span { display: none; }
+  .breadcrumbs .crumb-separator { display: none; }
+  .help-control > summary { width: 44px; height: 44px; }
+  .page-content { padding: 20px 16px 32px; }
+  .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dashboard-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .detail-related { position: static; }
+  .button { min-height: 44px; }
+  .global-search, .table-search { height: 44px; }
+  .filter-select select, .filter-select input[type="month"] { height: 44px; }
+  .filter-button, .form-actions .button, .records-pagination .button { min-height: 44px; }
+  .row-actions { gap: 8px; }
+  .row-actions .table-action { min-height: 44px; }
+  .data-table td[data-numeric="true"]::before { text-align: left; }
+  .form-field input, .form-field select, .form-field textarea,
+  .global-search input, .table-search input { font-size: 16px; }
+}
+
+@media (max-width: 900px) {
+  .detail-related { position: static; }
+}
+
+@media (max-width: 560px) {
+  .activity-summary .panel-header { flex-wrap: wrap; }
 }
