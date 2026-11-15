@@ -46,7 +46,7 @@
       {% for row in rows %}
         <tr data-record-id="{{ row.id }}">
           {% for key, label in config.columns %}
-            <td data-field="{{ key }}">
+            <td data-field="{{ key }}" data-label="{{ label }}">
               {% if key == 'status' %}
                 <span class="status-pill status-{{ row[key]|lower|replace(' ', '-') }}">{{ row[key] }}</span>
               {% elif key == 'name' and section == 'landlords' %}
@@ -65,7 +65,7 @@
               {% endif %}
             </td>
           {% endfor %}
-          <td class="row-actions">
+          <td class="row-actions" data-label="Actions">
             <a class="table-action" href="{{ url_for('record_detail', section=section, record_id=row.id) }}">View</a>
             {% if section == 'landlords' and row.status|lower != 'archived' %}
               <a class="table-action" data-offline-edit="landlords" data-record="{{ row|tojson|forceescape }}" href="{{ url_for('landlord_form', landlord_id=row.id) }}">Edit</a>

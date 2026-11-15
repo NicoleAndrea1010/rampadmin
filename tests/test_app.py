@@ -194,6 +194,7 @@ class RampAdminWebTests(unittest.TestCase):
         response = self.client.get("/landlords?q=Amara")
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Amara Santos", response.data)
+        self.assertIn(b'data-label="Landlord"', response.data)
         self.assertNotIn(b"Daniel Reyes", response.data)
         self.assertIn(b'data-loading-label="Filtering', response.data)
         export = self.client.get("/landlords/export.csv?q=Amara")

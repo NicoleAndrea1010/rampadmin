@@ -282,6 +282,198 @@ form[aria-busy="true"] { cursor: progress; }
 .search-empty strong { color: var(--text-strong); font-size: 13px; }
 .search-empty small { color: var(--text-muted); font-size: 11px; }
 
+.dashboard-heading {
+  position: relative;
+  padding: 4px 0 22px;
+  border-bottom: 1px solid #e6ecf4;
+}
+.dashboard-heading h1::before {
+  margin-bottom: 7px;
+  display: block;
+  color: #7487a2;
+  content: "PORTFOLIO OVERVIEW";
+  font: 700 10px "DM Sans", sans-serif;
+  letter-spacing: .13em;
+}
+.dashboard-heading .page-subtitle { max-width: 560px; }
+.dashboard-heading > .button { box-shadow: 0 6px 16px rgba(40, 111, 227, .2); }
+.dashboard-stats { gap: 14px; }
+.dashboard-stats .stat-card {
+  isolation: isolate;
+  min-height: 138px;
+  padding: 20px 21px;
+  background: linear-gradient(145deg, #fff 0%, #fff 72%, #f7faff 100%);
+  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.dashboard-stats .stat-card::after {
+  position: absolute;
+  z-index: -1;
+  right: -24px;
+  bottom: -34px;
+  width: 110px;
+  height: 110px;
+  border: 1px solid rgba(69, 127, 218, .09);
+  border-radius: 50%;
+  content: "";
+}
+.dashboard-stats .stat-card:nth-child(4n + 2)::after { border-color: rgba(130, 102, 206, .1); }
+.dashboard-stats .stat-card:nth-child(4n + 3)::after { border-color: rgba(30, 151, 110, .1); }
+.dashboard-stats .stat-card:nth-child(4n)::after { border-color: rgba(213, 144, 48, .12); }
+.dashboard-stats .stat-card:hover {
+  transform: translateY(-3px);
+  border-color: #cddcf1;
+  box-shadow: 0 12px 26px rgba(31, 64, 112, .09);
+}
+.dashboard-stats .stat-value { font-variant-numeric: tabular-nums; }
+.dashboard-lower-grid { gap: 18px; }
+.follow-up-panel, .activity-summary { box-shadow: 0 3px 14px rgba(25, 43, 70, .035); }
+.follow-up-panel .panel-header, .activity-summary .panel-header { padding-top: 21px; }
+.attention-row { border-radius: 8px; }
+.attention-row:hover { background: #f7faff; }
+.activity-summary-row { padding: 5px 8px; margin: 0 -8px; border-radius: 8px; }
+.activity-summary-row:hover { background: #f7faff; }
+
+.unit-status-strip { box-shadow: 0 3px 14px rgba(25, 43, 70, .025); }
+.unit-status-strip a { min-height: 36px; border: 1px solid #e8edf4; background: #fbfcfe; }
+.unit-status-strip a:hover { border-color: #d3e2f8; }
+.data-panel { box-shadow: 0 5px 20px rgba(25, 43, 70, .04); }
+.table-search:focus-within, .filter-select:focus-within {
+  border-color: #83aef0;
+  box-shadow: 0 0 0 3px rgba(52, 120, 236, .09);
+}
+.filter-toolbar { background: linear-gradient(180deg, #fff, #fcfdff); }
+.count-chip { min-height: 34px; display: inline-flex; align-items: center; }
+.count-chip:hover { background: #f5f8fc; }
+.data-table td { vertical-align: middle; }
+.records-pagination { justify-content: center; }
+.records-pagination > span { min-width: 100px; text-align: center; }
+
+@media (max-width: 760px) {
+  .dashboard-heading {
+    align-items: flex-start;
+    padding-bottom: 17px;
+  }
+  .dashboard-heading h1::before { font-size: 9px; }
+  .dashboard-heading .button { align-self: flex-end; }
+  .dashboard-stats { gap: 11px; }
+  .dashboard-stats .stat-card {
+    min-height: 124px;
+    padding: 16px;
+  }
+  .dashboard-stats .stat-value { margin-top: 10px; }
+  .dashboard-lower-grid { gap: 12px; }
+}
+
+@media (max-width: 640px) {
+  .table-scroll { overflow: visible; }
+  .data-table {
+    width: 100%;
+    min-width: 0;
+    display: block;
+    white-space: normal;
+  }
+  .data-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    clip-path: inset(50%);
+    border: 0;
+  }
+  .data-table tbody {
+    display: grid;
+    gap: 11px;
+    padding: 12px;
+  }
+  .data-table tbody tr {
+    display: grid;
+    overflow: hidden;
+    border: 1px solid #e5ebf3;
+    border-radius: 11px;
+    background: #fff;
+    box-shadow: 0 3px 12px rgba(25, 43, 70, .035);
+  }
+  .data-table tbody tr:hover { background: #fff; }
+  .data-table td,
+  .data-table th:first-child,
+  .data-table td:first-child {
+    height: auto;
+    min-width: 0;
+    padding: 10px 12px;
+    border-top: 1px solid #f0f3f7;
+    text-align: left;
+    white-space: normal;
+  }
+  .data-table td:first-child { border-top: 0; }
+  .data-table td[data-label]:not(.row-actions):not(.empty-cell) {
+    display: grid;
+    grid-template-columns: minmax(84px, .38fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 10px;
+  }
+  .data-table td[data-label]:not(.row-actions):not(.empty-cell)::before {
+    padding-top: 2px;
+    color: #718198;
+    content: attr(data-label);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+  .data-table .person-cell { min-width: 0; }
+  .data-table .person-cell strong,
+  .data-table .person-cell small { overflow-wrap: anywhere; white-space: normal; }
+  .data-table .truncate-cell { max-width: 100%; }
+  .data-table .row-actions {
+    min-width: 0;
+    padding: 9px 10px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 5px;
+    border-top: 1px solid #e8edf4;
+    background: #f9fbfe;
+    text-align: left;
+  }
+  .data-table .row-actions::before {
+    width: 100%;
+    padding: 0 2px 3px;
+    color: #718198;
+    content: attr(data-label);
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .data-table .row-actions .table-action { margin: 0; }
+  .data-table .empty-cell {
+    display: grid;
+    min-height: 190px;
+    place-content: center;
+    text-align: center;
+  }
+  .data-table .empty-cell::before { content: none !important; }
+  .records-pagination {
+    flex-wrap: wrap;
+    padding: 14px 10px;
+  }
+}
+
+@media (max-width: 420px) {
+  .dashboard-heading { flex-wrap: wrap; }
+  .dashboard-heading > div { width: 100%; }
+  .dashboard-heading .button { align-self: flex-start; }
+  .dashboard-stats .stat-card { min-height: 112px; }
+  .unit-status-strip { gap: 7px; padding: 11px; }
+  .unit-status-strip > strong { flex-basis: 100%; }
+  .data-table tbody { padding: 9px; }
+  .data-table td[data-label]:not(.row-actions):not(.empty-cell) {
+    grid-template-columns: minmax(76px, .34fr) minmax(0, 1fr);
+    gap: 8px;
+  }
+}
+
 :root {
   --text-strong: #192b46;
   --text-body: #4a5a70;
