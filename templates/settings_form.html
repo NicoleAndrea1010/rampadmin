@@ -8,7 +8,7 @@
 <section class="panel form-panel">
   <form method="post" class="landlord-form" data-requires-online="true" data-confirm="Save these settings to Supabase?" data-loading-label="Saving…">
     {% if form_error %}<p class="form-error" role="alert">{{ form_error }}</p>{% endif %}
-    <div class="form-section-heading"><span class="form-section-icon">⚙</span><span><strong>Property defaults</strong></span></div>
+    <div class="form-section-heading"><span class="form-section-icon"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-settings"></use></svg></span><span><strong>Property defaults</strong></span></div>
     <div class="form-grid">
       <label class="form-field"><span>Default late fee</span><input type="number" name="default_late_fee" min="0" step="any" required value="{{ form_values.get('default_late_fee', record.default_late_fee) }}"></label>
       <label class="form-field"><span>Default due day</span><input type="number" name="default_due_day" min="1" max="31" step="1" required value="{{ form_values.get('default_due_day', record.default_due_day) }}"></label>
@@ -24,8 +24,8 @@
     </div>
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {% if record.updated_at %}<input type="hidden" name="updated_at" value="{{ record.updated_at }}">{% endif %}
-    <div class="form-note"><span>i</span><p>The app updates only this existing record and uses your signed-in Supabase session.</p></div>
-    <div class="form-actions"><a class="button button-secondary" href="{{ url_for('record_detail', section='settings', record_id=record.id) }}">Cancel</a><button class="button button-primary" type="submit">Save settings <span>→</span></button></div>
+    <div class="form-note"><span><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-info"></use></svg></span><p>The app updates only this existing record and uses your signed-in Supabase session.</p></div>
+    <div class="form-actions"><a class="button button-secondary" href="{{ url_for('record_detail', section='settings', record_id=record.id) }}">Cancel</a><button class="button button-primary" type="submit">Save settings <svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-arrow-right"></use></svg></button></div>
   </form>
 </section>
 {% endblock %}

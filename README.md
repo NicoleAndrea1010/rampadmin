@@ -55,6 +55,10 @@ Only use the Supabase project URL and **publishable** key. Never put a service-r
 
 On a trusted browser device, the service worker caches authenticated pages the admin has visited for up to eight hours. Supported record edits and archive/access changes made while offline are kept in that browser's IndexedDB queue and posted to Supabase after connectivity returns. The UI shows queued, syncing, and conflict states; an edit is not presented as synced until Supabase accepts it. Sync checks record versions and leaves conflicting changes queued for review rather than overwriting newer server data. Email invitations require a live connection. Sign-out is blocked while changes are pending; after the queue is empty, the app clears that browser's cached pages and local queue.
 
+The interface icons, favicon, and installable app icon manifest are served locally
+and included in the service-worker shell cache, so icons do not depend on a
+third-party icon CDN.
+
 Offline editing is limited to the supported landlord, unit, tenant, and
 superadmin-profile workflows. Expense and announcement forms, settings changes,
 and invitations require an active connection; new records are not queued while

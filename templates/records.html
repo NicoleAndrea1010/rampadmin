@@ -9,13 +9,13 @@
   </div>
   <div class="heading-actions">
     {% if section == 'settings' %}<a class="button button-secondary" href="{{ url_for('terms_draft') }}">Terms &amp; Conditions draft</a>{% endif %}
-    {% if section == 'landlords' %}<a class="button button-primary" href="{{ url_for('landlord_form') }}"><span>＋</span> Add landlord</a>{% endif %}
-    {% if section == 'properties' %}<a class="button button-primary" href="{{ url_for('property_form') }}"><span>＋</span> Add property</a>{% endif %}
-    {% if section == 'tenants' %}<a class="button button-primary" href="{{ url_for('tenant_form') }}"><span>＋</span> Add tenant</a>{% endif %}
-    {% if section == 'expenses' %}<a class="button button-primary" href="{{ url_for('expense_form') }}"><span>＋</span> Add expense</a>{% endif %}
-    {% if section == 'announcements' %}<a class="button button-primary" href="{{ url_for('announcement_form') }}"><span>＋</span> Add announcement</a>{% endif %}
-    {% if section == 'superadmins' and not preview_mode %}<a class="button button-primary" href="{{ url_for('superadmin_form') }}"><span>＋</span> Invite superadmin</a>{% endif %}
-    <a class="button button-secondary" href="{{ url_for('export_csv', section=section, q=query, status=status, period=period, sort=sort, direction=direction) }}"><span>↓</span> Export CSV</a>
+    {% if section == 'landlords' %}<a class="button button-primary" href="{{ url_for('landlord_form') }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-plus"></use></svg> Add landlord</a>{% endif %}
+    {% if section == 'properties' %}<a class="button button-primary" href="{{ url_for('property_form') }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-plus"></use></svg> Add property</a>{% endif %}
+    {% if section == 'tenants' %}<a class="button button-primary" href="{{ url_for('tenant_form') }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-plus"></use></svg> Add tenant</a>{% endif %}
+    {% if section == 'expenses' %}<a class="button button-primary" href="{{ url_for('expense_form') }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-plus"></use></svg> Add expense</a>{% endif %}
+    {% if section == 'announcements' %}<a class="button button-primary" href="{{ url_for('announcement_form') }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-plus"></use></svg> Add announcement</a>{% endif %}
+    {% if section == 'superadmins' and not preview_mode %}<a class="button button-primary" href="{{ url_for('superadmin_form') }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-plus"></use></svg> Invite superadmin</a>{% endif %}
+    <a class="button button-secondary" href="{{ url_for('export_csv', section=section, q=query, status=status, period=period, sort=sort, direction=direction) }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-download"></use></svg> Export CSV</a>
   </div>
 </div>
 
@@ -31,9 +31,9 @@
 </div>
 <section class="panel data-panel">
   <form class="filter-toolbar" method="get" data-loading-label="Filtering…">
-    <label class="table-search"><span>⌕</span><input type="search" name="q" value="{{ query }}" placeholder="Search {{ config.title|lower }}..." aria-label="Search {{ config.title|lower }}"></label>
+    <label class="table-search"><span aria-hidden="true"><svg class="icon"><use href="{{ url_for('static', filename='icons.svg') }}#icon-search"></use></svg></span><input type="search" name="q" value="{{ query }}" placeholder="Search {{ config.title|lower }}..." aria-label="Search {{ config.title|lower }}"></label>
     {% if section == 'expenses' %}<label class="filter-select"><span class="visually-hidden">Filter by month</span><input type="month" name="period" min="2025-01" value="{{ period }}" aria-label="Filter expenses by month"></label>{% endif %}
-    {% if statuses or status != 'All' %}<label class="filter-select"><span class="visually-hidden">Filter by status</span><select name="status" onchange="this.form.submit()"><option value="All" {% if status == 'All' %}selected{% endif %}>All statuses</option>{% if status != 'All' and status not in statuses %}<option value="{{ status }}" selected>{{ status }}</option>{% endif %}{% for item in statuses %}<option value="{{ item }}" {% if status == item %}selected{% endif %}>{{ item }}</option>{% endfor %}</select><span class="select-arrow">⌄</span></label>{% endif %}
+    {% if statuses or status != 'All' %}<label class="filter-select"><span class="visually-hidden">Filter by status</span><select name="status" onchange="this.form.submit()"><option value="All" {% if status == 'All' %}selected{% endif %}>All statuses</option>{% if status != 'All' and status not in statuses %}<option value="{{ status }}" selected>{{ status }}</option>{% endif %}{% for item in statuses %}<option value="{{ item }}" {% if status == item %}selected{% endif %}>{{ item }}</option>{% endfor %}</select><span class="select-arrow"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-chevron-down"></use></svg></span></label>{% endif %}
     {% if sort %}<input type="hidden" name="sort" value="{{ sort }}"><input type="hidden" name="direction" value="{{ direction }}">{% endif %}
     <button class="button button-secondary filter-button" type="submit">Filter</button>
     {% if query or status != 'All' %}<a class="clear-filters" href="{{ url_for('records_page', section=section) }}">Clear filters</a>{% endif %}
@@ -113,7 +113,7 @@
           </td>
         </tr>
       {% else %}
-        <tr><td class="empty-cell" colspan="{{ config.columns|length + 1 }}"><span class="empty-icon">⌕</span><strong>No matching {{ config.title|lower }}</strong><small>Try adjusting your search or filters.</small></td></tr>
+        <tr><td class="empty-cell" colspan="{{ config.columns|length + 1 }}"><span class="empty-icon"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-search"></use></svg></span><strong>No matching {{ config.title|lower }}</strong><small>Try adjusting your search or filters.</small></td></tr>
       {% endfor %}
       </tbody>
     </table>

@@ -1,10 +1,12 @@
-const CACHE_NAME = "ramp-admin-shell-v13";
+const CACHE_NAME = "ramp-admin-shell-v14";
 const SHELL_FILES = [
   "/static/form-ux.js?v=2",
   "/static/app.js?v=10",
   "/static/style.css?v=8",
-  "/static/polish.css?v=12",
+  "/static/polish.css?v=13",
   "/static/favicon.svg",
+  "/static/icons.svg",
+  "/static/site.webmanifest",
   "/static/offline.html",
 ];
 const MAX_PAGE_AGE = 8 * 60 * 60 * 1000;

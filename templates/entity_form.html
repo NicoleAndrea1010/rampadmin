@@ -8,7 +8,7 @@
 <section class="panel form-panel">
   <form method="post" class="landlord-form" data-loading-label="Saving…" data-confirm="{{ 'Save changes to this record?' if record else '' }}" {% if record and section in ['properties', 'tenants'] %}data-offline-queue="true"{% else %}data-requires-online="true"{% endif %}>
     {% if form_error %}<p class="form-error" role="alert">{{ form_error }}</p>{% endif %}
-    <div class="form-section-heading"><span class="form-section-icon">✎</span><span><strong>Record details</strong></span></div>
+    <div class="form-section-heading"><span class="form-section-icon"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-pencil"></use></svg></span><span><strong>Record details</strong></span></div>
     <div class="form-grid">
       {% for field in fields %}
       {% set submitted = field.key in form_values %}
@@ -56,8 +56,8 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {% if not record %}<input type="hidden" name="record_id" value="{{ new_record_id }}">{% endif %}
     {% if record and record.get('updated_at') %}<input type="hidden" name="updated_at" value="{{ record.updated_at }}">{% endif %}
-    <div class="form-note"><span>i</span><p>Changes are saved to Supabase and remain subject to its access policies.</p></div>
-    <div class="form-actions"><a class="button button-secondary" href="{{ url_for('records_page', section=section) }}">Cancel</a><button class="button button-primary" type="submit">{{ 'Save changes' if record else 'Create record' }} <span>→</span></button></div>
+    <div class="form-note"><span><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-info"></use></svg></span><p>Changes are saved to Supabase and remain subject to its access policies.</p></div>
+    <div class="form-actions"><a class="button button-secondary" href="{{ url_for('records_page', section=section) }}">Cancel</a><button class="button button-primary" type="submit">{{ 'Save changes' if record else 'Create record' }} <svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-arrow-right"></use></svg></button></div>
   </form>
 </section>
 {% endblock %}

@@ -8,7 +8,7 @@
 </head>
 <body class="error-page">
   <main class="panel error-card">
-    <span class="placeholder-icon">!</span>
+    <span class="placeholder-icon"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-alert"></use></svg></span>
     <p class="eyebrow">BACKEND CONNECTION</p>
     <h1>We couldn't load this page</h1>
     <p>{{ message }}</p>

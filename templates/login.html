@@ -6,20 +6,21 @@
   <meta name="theme-color" content="#102a55">
   <title>Sign in · RAMP Admin</title>
   <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+  <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=8">
-  <link rel="stylesheet" href="{{ url_for('static', filename='polish.css') }}?v=10">
+  <link rel="stylesheet" href="{{ url_for('static', filename='polish.css') }}?v=13">
 </head>
 <body class="login-page">
   <main class="login-layout">
     <section class="login-brand-panel">
       <a class="brand login-brand" href="{{ url_for('login') }}">
-        <span class="brand-mark"><span></span><span></span><span></span><span></span></span>
+        <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-listing"></use></svg></span>
         <span class="brand-copy"><strong>ramp</strong><small>SUPER ADMIN</small></span>
       </a>
-      <div class="login-brand-message"><span class="login-orbit">⌂</span><p>PROPERTY MANAGEMENT, MADE CLEAR.</p><h1>Your entire rental portfolio,<br>in one place.</h1><span>Operations, payments, and people—working together.</span></div>
+      <div class="login-brand-message"><span class="login-orbit"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-listing"></use></svg></span><p>PROPERTY MANAGEMENT, MADE CLEAR.</p><h1>Your entire rental portfolio,<br>in one place.</h1><span>Operations, payments, and people—working together.</span></div>
       <span class="login-brand-footer">RAMP ADMIN · SECURE WORKSPACE</span>
     </section>
     <section class="login-main">
@@ -57,9 +58,9 @@
             <div class="login-links">
               <a href="{{ url_for('forgot_password') }}">Forgot password?</a>
             </div>
-            <button type="submit" class="button button-primary login-submit">Sign in <span>→</span></button>
+            <button type="submit" class="button button-primary login-submit">Sign in <svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-arrow-right"></use></svg></button>
           </form>
-          <p class="login-security"><span>▣</span> Authenticated by Supabase. Only approved super-admin accounts can access this workspace.</p>
+          <p class="login-security"><span><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-lock"></use></svg></span> Authenticated by Supabase. Only approved super-admin accounts can access this workspace.</p>
           <script>
             const passwordInput = document.getElementById('password');
             const toggleButton = document.querySelector('.password-toggle');

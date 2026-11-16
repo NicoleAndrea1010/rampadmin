@@ -6,17 +6,18 @@
   <meta name="theme-color" content="#102a55">
   <title>{% block title %}RAMP Admin{% endblock %} · RAMP</title>
   <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+  <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=8">
-  <link rel="stylesheet" href="{{ url_for('static', filename='polish.css') }}?v=12">
+  <link rel="stylesheet" href="{{ url_for('static', filename='polish.css') }}?v=13">
 </head>
 <body data-offline-scope="{{ current_user.uid if current_user else 'preview' }}">
   <div class="app-shell">
     <aside class="sidebar" id="sidebar">
       <a class="brand" href="{{ url_for('dashboard') }}">
-        <span class="brand-mark"><span></span><span></span><span></span><span></span></span>
+        <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-listing"></use></svg></span>
         <span class="brand-copy"><strong>ramp</strong><small>SUPER ADMIN</small></span>
       </a>
       <nav class="navigation" aria-label="Main navigation">
@@ -37,7 +38,7 @@
           {% endif %}
           <a class="nav-link {% if request.path == '/' and key == 'dashboard' or request.path.startswith('/' ~ key) and key != 'dashboard' %}active{% endif %}"
              href="{% if key == 'dashboard' %}{{ url_for('dashboard') }}{% elif key == 'connections' or key == 'access' or key == 'settings' %}{{ url_for('records_page', section=key) }}{% else %}{{ url_for('records_page', section=key) }}{% endif %}">
-            <span class="nav-icon">{{ icon }}</span>
+            <span class="nav-icon"><svg class="icon" aria-hidden="true" focusable="false"><use href="{{ url_for('static', filename='icons.svg') }}#icon-{{ icon }}"></use></svg></span>
             <span>{{ label }}</span>
           </a>
         {% endfor %}
@@ -51,7 +52,7 @@
           {% if current_user %}
           <form action="{{ url_for('logout') }}" method="post" data-loading-label="Signing out…">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button class="icon-button sidebar-more" aria-label="Sign out">↪</button>
+            <button class="icon-button sidebar-more" aria-label="Sign out"><svg class="icon" aria-hidden="true" focusable="false"><use href="{{ url_for('static', filename='icons.svg') }}#icon-logout"></use></svg></button>
           </form>
           {% endif %}
         </div>
@@ -60,14 +61,14 @@
 
     <main class="main">
       <header class="topbar">
-        <button class="icon-button menu-button" id="menuToggle" aria-label="Open navigation">☰</button>
+        <button class="icon-button menu-button" id="menuToggle" aria-label="Open navigation"><svg class="icon" aria-hidden="true" focusable="false"><use href="{{ url_for('static', filename='icons.svg') }}#icon-menu"></use></svg></button>
         <div class="breadcrumbs"><span>RAMP</span><span class="crumb-separator">/</span><strong>{% block breadcrumb %}Overview{% endblock %}</strong></div>
         <form class="global-search" action="{{ url_for('global_search') }}" method="get" role="search">
-          <span class="search-icon" aria-hidden="true">⌕</span>
+          <span class="search-icon" aria-hidden="true"><svg class="icon"><use href="{{ url_for('static', filename='icons.svg') }}#icon-search"></use></svg></span>
           <input type="search" name="q" maxlength="120" placeholder="Search all records" aria-label="Search all records">
         </form>
         <details class="help-control">
-          <summary aria-label="How to use RAMP Admin" title="How to use RAMP Admin">?</summary>
+          <summary aria-label="How to use RAMP Admin" title="How to use RAMP Admin"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-help"></use></svg></summary>
           <section class="help-panel" aria-label="RAMP Admin guide">
             <h2>Quick guide</h2>
             <ul>
@@ -83,9 +84,9 @@
 
       <section class="page-content">
         {% if preview_mode %}
-        <div class="preview-notice"><span class="notice-symbol">i</span><span><strong>Local preview</strong> · Not connected to Supabase.</span></div>
+        <div class="preview-notice"><span class="notice-symbol"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-info"></use></svg></span><span><strong>Local preview</strong> · Not connected to Supabase.</span></div>
         {% else %}
-        <div class="preview-notice live-notice" id="connectionNotice"><span class="notice-symbol">✓</span><span><strong>Live data</strong> · Connected to Supabase.</span></div>
+        <div class="preview-notice live-notice" id="connectionNotice"><span class="notice-symbol"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-check"></use></svg></span><span><strong>Live data</strong> · Connected to Supabase.</span></div>
         {% endif %}
         {% with messages = get_flashed_messages(with_categories=true) %}
           {% if messages %}

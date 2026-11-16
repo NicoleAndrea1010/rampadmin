@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -1446,7 +1447,27 @@ class RampAdminWebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["Service-Worker-Allowed"], "/")
         self.assertIn(b"ramp-admin-shell", response.data)
+        self.assertIn(b"/static/icons.svg", response.data)
+        self.assertIn(b"/static/site.webmanifest", response.data)
         response.close()
+
+    def test_local_icon_assets_and_app_manifest_are_available(self):
+        page = self.client.get("/")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"/static/icons.svg#icon-dashboard", page.data)
+        self.assertIn(b"/static/site.webmanifest", page.data)
+
+        icons = self.client.get("/static/icons.svg")
+        self.assertEqual(icons.status_code, 200)
+        self.assertIn(b'<symbol id="icon-dashboard"', icons.data)
+        icons.close()
+
+        manifest = self.client.get("/static/site.webmanifest")
+        self.assertEqual(manifest.status_code, 200)
+        manifest_data = json.loads(manifest.get_data(as_text=True))
+        self.assertEqual(manifest_data["name"], "RAMP Admin")
+        self.assertEqual(manifest_data["icons"][0]["src"], "/static/favicon.svg")
+        manifest.close()
 
     def test_invalid_landlord_is_rejected(self):
         csrf = self.csrf_token()
