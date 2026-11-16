@@ -692,7 +692,12 @@ select:focus-visible, textarea:focus-visible, summary:focus-visible {
 .audit-summary[data-kind="success"]::before { background: #2c9664; }
 .audit-summary[data-kind="updated"]::before { background: #3478ec; }
 .audit-summary[data-kind="danger"]::before { background: #c84e49; }
-.audit-time { white-space: nowrap; }
+.history-time { white-space: nowrap; }
+.audit-time-future {
+  color: #a16207;
+  font-weight: 600;
+  white-space: normal;
+}
 .private-detail-panel { border-color: #ead9b2; }
 
 .flash { padding: 13px 15px; border: 1px solid transparent; border-radius: 9px; line-height: 1.5; }
@@ -1005,8 +1010,13 @@ select:focus-visible, textarea:focus-visible, summary:focus-visible {
 .status-expired,
 .status-overdue,
 .status-rejected,
+.status-denied,
 .status-cancelled { color: #b42318; background: #fef3f2; }
 .status-pending { color: #9a6700; background: #fff8e6; }
+.status-review { color: #9a6700; background: #fff8e6; }
+.status-granted { color: #16815e; background: #e9f7f1; }
+.status-historical,
+.status-unknown { color: #788699; background: #eff2f5; }
 .status-active .status-dot,
 .status-occupied .status-dot,
 .status-paid .status-dot { box-shadow: 0 0 0 2px rgba(22, 129, 94, .12); }

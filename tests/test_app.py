@@ -272,6 +272,123 @@ class RampAdminWebTests(unittest.TestCase):
         self.assertNotIn(b"UTC", response.data)
         self.assertIn(b'title="2026-02-03T15:04:00+00:00"', response.data)
 
+    def test_rfid_history_filters_by_result_and_marks_local_time(self):
+        with ramp_app.get_db() as db:
+            for record_id, status in (
+                ("rfid-granted", "Granted"),
+                ("rfid-denied", "Denied"),
+            ):
+                db.execute(
+                    "INSERT INTO records (section, id, data) VALUES (?, ?, ?)",
+                    (
+                        "rfid-access",
+                        record_id,
+                        ramp_app._json_dumps(
+                            {
+                                "id": record_id,
+                                "device": "Main entry",
+                                "unit": "402",
+                                "tenant": "Jamie Doe",
+                                "action": "Entry",
+                                "access_status": status,
+                                "created": "2026-02-03T15:04:00+00:00",
+                            }
+                        ),
+                    ),
+                )
+
+        response = self.client.get("/rfid-access?status=Denied")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Filter by access result", response.data)
+        self.assertIn(b"All results", response.data)
+        self.assertIn(b'data-record-id="rfid-denied"', response.data)
+        self.assertNotIn(b'data-record-id="rfid-granted"', response.data)
+        self.assertIn(
+            b'data-local-time datetime="2026-02-03T15:04:00+00:00"',
+            response.data,
+        )
+
+    def test_utility_history_marks_latest_effective_rates_and_shows_units(self):
+        today = ramp_app.date.today()
+        yesterday = today - ramp_app.timedelta(days=1)
+        tomorrow = today + ramp_app.timedelta(days=1)
+        entries = (
+            ("water-old", "Water", 12.5, yesterday.isoformat()),
+            ("water-current", "Water", 13.75, today.isoformat()),
+            ("water-future", "Water", 14.0, tomorrow.isoformat()),
+            ("electric-current", "Electricity", 8.25, today.isoformat()),
+        )
+        with ramp_app.get_db() as db:
+            for record_id, utility, rate, effective_at in entries:
+                db.execute(
+                    "INSERT INTO records (section, id, data) VALUES (?, ?, ?)",
+                    (
+                        "utility-history",
+                        record_id,
+                        ramp_app._json_dumps(
+                            {
+                                "id": record_id,
+                                "utility": utility,
+                                "previous_rate": rate - 1,
+                                "new_rate": rate,
+                                "effective_at": effective_at,
+                            }
+                        ),
+                    ),
+                )
+
+        response = self.client.get("/utility-history")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Previous rate (\xe2\x82\xb1/unit)", response.data)
+        self.assertIn(b"New rate (\xe2\x82\xb1/unit)", response.data)
+        self.assertIn("₱13.75".encode(), response.data)
+        self.assertIn("m³".encode(), response.data)
+        self.assertIn(b"kWh", response.data)
+        self.assertIn(b"Active", response.data)
+        self.assertIn(b"Historical", response.data)
+        self.assertIn(b"Scheduled", response.data)
+        self.assertIn(b'data-local-time datetime="' + today.isoformat().encode() + b'"', response.data)
+
+        active_response = self.client.get("/utility-history?status=Active")
+        self.assertIn(b'data-record-id="water-current"', active_response.data)
+        self.assertIn(b'data-record-id="electric-current"', active_response.data)
+        self.assertNotIn(b'data-record-id="water-old"', active_response.data)
+        self.assertNotIn(b'data-record-id="water-future"', active_response.data)
+
+        detail = self.client.get("/utility-history/water-current")
+        self.assertEqual(detail.status_code, 200)
+        self.assertIn("₱12.75".encode(), detail.data)
+        self.assertIn("m³".encode(), detail.data)
+
+    def test_empty_unit_page_has_create_action_and_search_empty_state(self):
+        empty_response = self.client.get("/properties")
+
+        self.assertEqual(empty_response.status_code, 200)
+        self.assertIn(b"No units yet", empty_response.data)
+        self.assertIn(b'href="/properties/new">Add first unit</a>', empty_response.data)
+
+        record_id = str(uuid4())
+        with ramp_app.get_db() as db:
+            db.execute(
+                "INSERT INTO records (section, id, data) VALUES (?, ?, ?)",
+                (
+                    "properties",
+                    record_id,
+                    ramp_app._json_dumps(
+                        {"id": record_id, "unit_number": "402", "name": "Harbor View"}
+                    ),
+                ),
+            )
+
+        no_match_response = self.client.get("/properties?q=missing")
+
+        self.assertEqual(no_match_response.status_code, 200)
+        self.assertIn(b"No matching units", no_match_response.data)
+        self.assertIn(b"Clear filters", no_match_response.data)
+        self.assertNotIn(b"Add first unit", no_match_response.data)
+
     def test_tenant_actions_are_collapsed_and_email_stays_below_name(self):
         record_id = str(uuid4())
         with ramp_app.get_db() as db:
@@ -351,6 +468,36 @@ class RampAdminWebTests(unittest.TestCase):
         self.assertNotIn("SELECT * FROM", str(raw_query))
         self.assertNotIn("UPDATE units SET", str(raw_query))
 
+    def test_audit_summary_understands_verb_resource_actions_and_metadata_aliases(self):
+        named_tenant = ramp_app._normalize_audit_row(
+            {
+                "action": "add tenant",
+                "details": ramp_app._json_dumps(
+                    {
+                        "user_name": "Alex Admin",
+                        "tenant_name": "Jamie Doe",
+                        "tenant_id": "tenant-42",
+                    }
+                ),
+            }
+        )
+        self.assertEqual(named_tenant["actor"], "Alex Admin")
+        self.assertEqual(named_tenant["action"], "Added")
+        self.assertEqual(
+            named_tenant["summary"], "Alex Admin added Jamie Doe."
+        )
+
+        generic_tenant = ramp_app._normalize_audit_row(
+            {
+                "action": "update tenant",
+                "details": ramp_app._json_dumps({"user_email": "admin@example.com"}),
+            }
+        )
+        self.assertEqual(
+            generic_tenant["summary"],
+            "admin@example.com updated a tenant record.",
+        )
+
     def test_audit_pages_never_render_raw_query_details(self):
         record_id = str(uuid4())
         raw_query = "UPDATE units SET rent = 5200"
@@ -385,6 +532,14 @@ class RampAdminWebTests(unittest.TestCase):
         self.assertEqual(detail.status_code, 200)
         self.assertEqual(dashboard.status_code, 200)
         self.assertIn(b"admin@example.com updated a record.", listing.data)
+        self.assertIn(
+            b'<th scope="col" class="actions-heading" aria-label="Record actions">Actions</th>',
+            listing.data,
+        )
+        self.assertIn(b'aria-sort="descending"', listing.data)
+        self.assertIn(b"#icon-sort-down", listing.data)
+        self.assertIn(b'name="q"', listing.data)
+        self.assertIn(b"<strong>1</strong> audit history found", listing.data)
         self.assertIn(b"admin@example.com updated a record.", detail.data)
         self.assertIn(b"admin@example.com updated a record.", dashboard.data)
         self.assertIn(
@@ -394,6 +549,41 @@ class RampAdminWebTests(unittest.TestCase):
         self.assertNotIn(raw_query.encode(), listing.data)
         self.assertNotIn(raw_query.encode(), detail.data)
         self.assertNotIn(b"SELECT * FROM units", detail.data)
+
+    def test_audit_history_defaults_to_newest_timestamp_first(self):
+        with ramp_app.get_db() as db:
+            for record_id, target, timestamp in (
+                ("z-older", "Older record", "2026-02-01T10:00:00+00:00"),
+                ("a-newer", "Newer record", "2026-02-03T10:00:00+00:00"),
+            ):
+                db.execute(
+                    "INSERT INTO records (section, id, data) VALUES (?, ?, ?)",
+                    (
+                        "activity",
+                        record_id,
+                        ramp_app._json_dumps(
+                            {
+                                "id": record_id,
+                                "action": "UPDATE",
+                                "details": ramp_app._json_dumps(
+                                    {
+                                        "actor_name": "Admin",
+                                        "target_name": target,
+                                    }
+                                ),
+                                "timestamp": timestamp,
+                            }
+                        ),
+                    ),
+                )
+
+        response = self.client.get("/activity")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertLess(
+            response.data.index(b"Newer record"),
+            response.data.index(b"Older record"),
+        )
 
     def test_csv_export_escapes_spreadsheet_formulas(self):
         with ramp_app.get_db() as db:

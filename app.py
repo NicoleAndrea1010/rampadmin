@@ -283,8 +283,10 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "table": "utility_rate_logs",
         "columns": [
             ("utility", "Utility"),
-            ("previous_rate", "Previous rate"),
-            ("new_rate", "New rate"),
+            ("status", "Rate status"),
+            ("previous_rate", "Previous rate (₱/unit)"),
+            ("new_rate", "New rate (₱/unit)"),
+            ("rate_unit", "Rate unit"),
             ("effective_at", "Effective"),
             ("note", "Note"),
         ],
@@ -631,8 +633,9 @@ DETAIL_GROUPS = {
     ],
     "utility-history": [
         ("Rate change", (
-            ("Utility", "utility"), ("Previous rate", "previous_rate"),
-            ("New rate", "new_rate"), ("Effective", "effective_at"),
+            ("Utility", "utility"), ("Previous rate (₱/unit)", "previous_rate"),
+            ("New rate (₱/unit)", "new_rate"), ("Rate unit", "rate_unit"),
+            ("Effective", "effective_at"),
             ("Note", "note"),
         )),
     ],
@@ -791,18 +794,38 @@ def _normalize_audit_row(row: dict[str, Any]) -> dict[str, Any]:
         metadata.get("actor_name")
         or metadata.get("actor_email")
         or metadata.get("actor")
+        or metadata.get("user_name")
+        or metadata.get("user_email")
+        or metadata.get("performed_by")
     ) or "Administrator"
 
     raw_action = _safe_audit_text(row.get("action"), 80)
     action_key = re.sub(r"[\s-]+", "_", raw_action).upper()
+    resource_action = re.fullmatch(
+        r"(?P<verb>add|create|insert|update|edit|delete|remove|archive|approve|decline|invite)"
+        r"\s+(?:a\s+|an\s+)?(?P<resource>tenant|tenants|unit|units|property|properties|"
+        r"landlord|landlords|inquiry|inquiries|payment|payments|maintenance(?:\s+request)?|"
+        r"announcement|announcements|expense|expenses|account|accounts)"
+        r"(?:\s+record)?",
+        raw_action,
+        re.IGNORECASE,
+    )
+    action_resource = ""
+    if resource_action:
+        action_key = resource_action.group("verb").upper()
+        action_resource = resource_action.group("resource").casefold()
     action_labels = {
+        "ADD": "Added",
+        "ADDED": "Added",
         "INSERT": "Created",
         "CREATE": "Created",
         "CREATED": "Created",
         "UPDATE": "Updated",
         "UPDATED": "Updated",
+        "EDIT": "Updated",
         "DELETE": "Deleted",
         "DELETED": "Deleted",
+        "REMOVE": "Deleted",
         "ARCHIVE": "Archived",
         "ARCHIVED": "Archived",
         "APPROVE": "Approved",
@@ -826,7 +849,7 @@ def _normalize_audit_row(row: dict[str, Any]) -> dict[str, Any]:
         action = action_labels[action_key]
         action_kind = (
             "danger" if action in {"Deleted", "Declined", "Disabled", "Failed sign-in"}
-            else "success" if action in {"Created", "Approved", "Sent invitation", "Activated"}
+            else "success" if action in {"Added", "Created", "Approved", "Sent invitation", "Activated"}
             else "updated" if action == "Updated"
             else "neutral"
         )
@@ -839,23 +862,48 @@ def _normalize_audit_row(row: dict[str, Any]) -> dict[str, Any]:
         metadata.get("description")
         or metadata.get("target_name")
         or metadata.get("resource_name")
+        or metadata.get("record_name")
+        or metadata.get("tenant_name")
+        or metadata.get("unit_number")
     )
-    target_id = _safe_audit_text(metadata.get("target_id"), 100)
+    target_id = _safe_audit_text(
+        metadata.get("target_id")
+        or metadata.get("record_id")
+        or metadata.get("entity_id")
+        or metadata.get("tenant_id")
+        or metadata.get("unit_id")
+        or metadata.get("property_id"),
+        100,
+    )
     resource = _safe_audit_text(
         metadata.get("target_type")
         or metadata.get("resource_type")
+        or metadata.get("entity_type")
         or metadata.get("table")
+        or action_resource
     )
     resource_labels = {
+        "tenant": "Tenant",
         "units": "Unit",
+        "unit": "Unit",
         "properties": "Property",
+        "property": "Property",
+        "landlord": "Landlord",
         "tenants": "Tenant",
+        "inquiry": "Inquiry",
+        "inquiries": "Inquiry",
         "landlords": "Landlord",
+        "payment": "Payment",
         "tenant_inquiries": "Inquiry",
         "payments": "Payment",
+        "maintenance": "Maintenance request",
         "maintenance_tickets": "Maintenance request",
+        "announcement": "Announcement",
         "announcements": "Announcement",
+        "expense": "Expense",
         "expenses": "Expense",
+        "account": "Account",
+        "accounts": "Account",
         "users": "Account",
     }
     resource_label = resource_labels.get(resource.casefold(), resource.replace("_", " ").title())
@@ -868,6 +916,9 @@ def _normalize_audit_row(row: dict[str, Any]) -> dict[str, Any]:
             else target_id
         )
         target = f"{resource_label or 'Record'} #{short_id}"
+    elif resource_label:
+        article = "an" if resource_label[0].casefold() in "aeiou" else "a"
+        target = f"{article} {resource_label.casefold()} record"
     else:
         target = "a record"
 
@@ -894,6 +945,50 @@ def _normalize_audit_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _utility_key_and_unit(value: Any) -> tuple[str, str]:
+    utility = str(value or "").strip().casefold()
+    if "water" in utility:
+        return "water", "m³"
+    if "electric" in utility:
+        return "electricity", "kWh"
+    return utility, "Not specified" if utility else "—"
+
+
+def _normalize_utility_rate_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    today = date.today()
+    parsed_rows: list[tuple[str, datetime | None, str]] = []
+    latest_effective: dict[str, tuple[datetime, list[int]]] = {}
+
+    for index, row in enumerate(rows):
+        utility_key, rate_unit = _utility_key_and_unit(row.get("utility"))
+        effective_at = _as_datetime(row.get("effective_at"))
+        parsed_rows.append((utility_key, effective_at, rate_unit))
+        if not utility_key or effective_at is None or effective_at.date() > today:
+            continue
+
+        current = latest_effective.get(utility_key)
+        if current is None or effective_at > current[0]:
+            latest_effective[utility_key] = (effective_at, [index])
+        elif effective_at == current[0]:
+            current[1].append(index)
+
+    normalized = []
+    for index, row in enumerate(rows):
+        utility_key, effective_at, rate_unit = parsed_rows[index]
+        if not utility_key or effective_at is None:
+            status = "Unknown"
+        elif effective_at.date() > today:
+            status = "Scheduled"
+        else:
+            latest = latest_effective.get(utility_key)
+            if latest is not None and effective_at == latest[0]:
+                status = "Active" if len(latest[1]) == 1 else "Review"
+            else:
+                status = "Historical"
+        normalized.append({**row, "rate_unit": rate_unit, "status": status})
+    return normalized
+
+
 def rows_for(section: str) -> list[dict[str, Any]]:
     config = getattr(g, "supabase_config", None) if has_request_context() else None
     if config is not None:
@@ -907,6 +1002,8 @@ def rows_for(section: str) -> list[dict[str, Any]]:
     rows = [json.loads(row["data"]) for row in records]
     if section == "activity":
         rows = [_normalize_audit_row(row) for row in rows]
+    elif section == "utility-history":
+        rows = _normalize_utility_rate_rows(rows)
     elif section == "announcements":
         rows = [
             {
@@ -952,7 +1049,8 @@ def filtered_rows(section: str) -> tuple[list[dict[str, Any]], str, str]:
             if needle in " ".join(str(value) for value in row.values()).casefold()
         ]
     if status != "All":
-        rows = [row for row in rows if row.get("status") == status]
+        status_key = "access_status" if section == "rfid-access" else "status"
+        rows = [row for row in rows if row.get(status_key) == status]
     return rows, query, status
 
 
@@ -964,7 +1062,15 @@ def sorted_rows(
     if direction not in {"asc", "desc"}:
         abort(400, description="Choose ascending or descending sort order.")
     if not sort_key:
-        return rows, "", direction
+        default_sorts = {
+            "activity": "occurred",
+            "rfid-access": "created",
+            "utility-history": "effective_at",
+        }
+        if section in default_sorts:
+            sort_key, direction = default_sorts[section], "desc"
+        else:
+            return rows, "", direction
     valid_keys = {key for key, _ in SECTIONS[section]["columns"]}
     if sort_key not in valid_keys:
         abort(400, description="Choose a valid sort column.")
@@ -998,6 +1104,18 @@ def currency(value: int | float) -> str:
 
 def currency_precise(value: int | float) -> str:
     return f"₱{value:,.2f}"
+
+
+def format_utility_rate(value: Any) -> str:
+    if value is None or value == "":
+        return "—"
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if not math.isfinite(amount):
+        return str(value)
+    return currency_precise(amount)
 
 
 def format_display_value(value: Any, field_name: str = "") -> str:
@@ -1053,6 +1171,7 @@ def format_structured_value(value: Any, field_name: str = "") -> str:
 
 
 app.jinja_env.filters["display_value"] = format_display_value
+app.jinja_env.filters["utility_rate"] = format_utility_rate
 
 
 @app.context_processor
@@ -1492,7 +1611,11 @@ def live_rows_for(section: str) -> list[dict[str, Any]]:
             normalized.append(dict(row))
         else:
             normalized.append(_normalize_audit_row(row))
-    return normalized
+    return (
+        _normalize_utility_rate_rows(normalized)
+        if section == "utility-history"
+        else normalized
+    )
 
 
 def _display_status(value: Any) -> str:
@@ -1563,7 +1686,9 @@ def _detail_groups(section: str, record: dict[str, Any]) -> list[dict[str, Any]]
             value = record.get(key)
             if value is None or value == "":
                 continue
-            if key in money_fields:
+            if section == "utility-history" and key in {"previous_rate", "new_rate"}:
+                value = format_utility_rate(value)
+            elif key in money_fields:
                 try:
                     value = currency(float(value))
                 except (TypeError, ValueError):
@@ -1881,7 +2006,10 @@ def records_page(section: str):
     rows = filtered[start_index : start_index + RECORDS_PAGE_SIZE]
     page_start = start_index + 1 if rows else 0
     page_end = start_index + len(rows)
-    statuses = sorted({str(row["status"]) for row in all_rows if row.get("status")})
+    status_key = "access_status" if section == "rfid-access" else "status"
+    statuses = sorted(
+        {str(row[status_key]) for row in all_rows if row.get(status_key)}
+    )
     related_landlords = rows_for("landlords") if section in {"properties", "tenants"} else []
     related_properties = rows_for("properties") if section == "tenants" else []
     return render_template(
@@ -1901,7 +2029,7 @@ def records_page(section: str):
         page_end=page_end,
         rows_for_count=len(all_rows),
         status_counts={
-            item: sum(row.get("status") == item for row in all_rows)
+            item: sum(row.get(status_key) == item for row in all_rows)
             for item in statuses
         },
         related_landlords=related_landlords,
@@ -1936,6 +2064,9 @@ def record_detail(section: str, record_id: str):
         abort(404)
     if section == "activity":
         record = _normalize_audit_row(record)
+    elif section == "utility-history":
+        _, rate_unit = _utility_key_and_unit(record.get("utility"))
+        record = {**record, "rate_unit": rate_unit}
 
     related_groups: list[dict[str, Any]] = []
     review_units: list[dict[str, Any]] = []

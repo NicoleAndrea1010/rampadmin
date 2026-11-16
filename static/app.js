@@ -143,7 +143,16 @@ function formatLocalAuditTimes() {
       return;
     }
 
-    let value = (parsed.getTime() - Date.now()) / 1000;
+    const secondsFromNow = (parsed.getTime() - Date.now()) / 1000;
+    if (secondsFromNow > 60) {
+      time.classList.add("audit-time-future");
+      time.textContent = `Future · ${exact}`;
+      time.setAttribute("aria-label", `Future timestamp; ${exact}`);
+      return;
+    }
+
+    time.classList.remove("audit-time-future");
+    let value = secondsFromNow;
     let unit = "second";
     for (const [threshold, nextUnit] of [
       [60, "minute"],

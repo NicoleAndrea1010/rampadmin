@@ -40,8 +40,14 @@ settings rows. Notifications, events, public listings, tenant-document
 metadata, utility-rate history, and RFID access history are read-only; audit
 history is also read-only. Audit history uses human-readable action labels and
 allowlisted actor/target metadata rather than rendering raw details; timestamps
-show relative local time with the exact local time on hover. Soft-linked records
-are linked only when a matching record can be found.
+show relative local time with the exact local time on hover, and future
+timestamps are flagged with their absolute local time. Soft-linked records are
+linked only when a matching record can be found.
+RFID history can be filtered by access result and uses the same local-time
+display. Utility rates show PHP per unit (water per m³, electricity per kWh);
+the Active badge is derived from the latest effective history entry on or
+before the server's current date and is not cross-checked against billing
+settings.
 
 Payment proof, tenant document, and photo links are not exposed because this
 web project has no verified private Storage URL flow. RFID card identifiers are
