@@ -123,6 +123,44 @@ function setFormSubmitting(form, isSubmitting, submitter = null) {
   window.rampFormUX.setSubmitting(form, isSubmitting, submitter);
 }
 
+function formatLocalAuditTimes() {
+  if (typeof Intl.RelativeTimeFormat !== "function") return;
+  const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  const dateOnlyPattern = /^\d{4}-\d{2}-\d{2}$/;
+  document.querySelectorAll("time[data-local-time][datetime]").forEach((time) => {
+    const raw = time.dateTime;
+    const isDateOnly = dateOnlyPattern.test(raw);
+    const parsed = new Date(isDateOnly ? `${raw}T00:00:00` : raw);
+    if (Number.isNaN(parsed.getTime())) return;
+    const exactOptions = isDateOnly
+      ? { dateStyle: "medium" }
+      : { dateStyle: "medium", timeStyle: "medium" };
+    const exact = new Intl.DateTimeFormat(undefined, exactOptions).format(parsed);
+    time.title = `${exact} (local time)`;
+    time.setAttribute("aria-label", exact);
+    if (isDateOnly) {
+      time.textContent = exact;
+      return;
+    }
+
+    let value = (parsed.getTime() - Date.now()) / 1000;
+    let unit = "second";
+    for (const [threshold, nextUnit] of [
+      [60, "minute"],
+      [60, "hour"],
+      [24, "day"],
+      [7, "week"],
+      [4.35, "month"],
+      [12, "year"],
+    ]) {
+      if (Math.abs(value) < threshold) break;
+      value /= threshold;
+      unit = nextUnit;
+    }
+    time.textContent = relativeTime.format(Math.round(value), unit);
+  });
+}
+
 async function responseErrorMessage(response) {
   const contentType = response.headers.get("Content-Type") || "";
   if (contentType.includes("application/json")) {
@@ -642,6 +680,7 @@ async function clearLocalData(scope) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  formatLocalAuditTimes();
   const sidebar = document.getElementById("sidebar");
   const scrim = document.getElementById("mobileScrim");
   const menuToggle = document.getElementById("menuToggle");

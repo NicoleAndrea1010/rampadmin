@@ -308,10 +308,8 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "description": "Review recorded administrative activity. History is read-only.",
         "table": "activity",
         "columns": [
-            ("actor", "Administrator"),
-            ("action", "Action"),
-            ("target", "Record"),
-            ("occurred", "Date"),
+            ("summary", "Activity"),
+            ("occurred", "When"),
         ],
     },
 }
@@ -653,8 +651,8 @@ DETAIL_GROUPS = {
     ],
     "activity": [
         ("Audit entry", (
-            ("Action", "action"), ("Details", "details"),
-            ("Timestamp", "timestamp"), ("Landlord ID", "landlord_id"),
+            ("Action", "action"), ("Activity", "details"),
+            ("Timestamp", "timestamp"),
         )),
     ],
     "superadmins": [
@@ -752,6 +750,150 @@ def _json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _audit_metadata(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _looks_like_sql(value: str) -> bool:
+    return re.match(
+        r"^\s*(?:SELECT\b[\s\S]*?\bFROM\b|INSERT\s+INTO\b|"
+        r"UPDATE\b[\s\S]*?\bSET\b|DELETE\s+FROM\b|"
+        r"(?:CREATE|ALTER|DROP)\s+(?:TABLE|SCHEMA|FUNCTION|POLICY)\b)",
+        value,
+        re.IGNORECASE,
+    ) is not None
+
+
+def _safe_audit_text(value: Any, maximum: int = 180) -> str:
+    if not isinstance(value, (str, int, float)):
+        return ""
+    text = str(value).strip()
+    lowered = text.casefold()
+    if (
+        not text
+        or _looks_like_sql(text)
+        or any(marker in lowered for marker in ("sqlstate", "traceback", "supabaserequesterror"))
+    ):
+        return ""
+    return text[:maximum]
+
+
+def _normalize_audit_row(row: dict[str, Any]) -> dict[str, Any]:
+    if "summary" in row and "action_kind" in row:
+        return row
+    metadata = _audit_metadata(row.get("details"))
+    actor = _safe_audit_text(
+        metadata.get("actor_name")
+        or metadata.get("actor_email")
+        or metadata.get("actor")
+    ) or "Administrator"
+
+    raw_action = _safe_audit_text(row.get("action"), 80)
+    action_key = re.sub(r"[\s-]+", "_", raw_action).upper()
+    action_labels = {
+        "INSERT": "Created",
+        "CREATE": "Created",
+        "CREATED": "Created",
+        "UPDATE": "Updated",
+        "UPDATED": "Updated",
+        "DELETE": "Deleted",
+        "DELETED": "Deleted",
+        "ARCHIVE": "Archived",
+        "ARCHIVED": "Archived",
+        "APPROVE": "Approved",
+        "APPROVED": "Approved",
+        "DECLINE": "Declined",
+        "DECLINED": "Declined",
+        "INVITE": "Sent invitation",
+        "INVITED": "Sent invitation",
+        "LOGIN": "Signed in",
+        "LOGIN_FAILED": "Failed sign-in",
+        "DISABLE": "Disabled",
+        "DISABLED": "Disabled",
+        "ACTIVATE": "Activated",
+        "ACTIVATED": "Activated",
+        "SUSPEND": "Suspended",
+        "SUSPENDED": "Suspended",
+    }
+    if _looks_like_sql(raw_action):
+        action, action_kind = "Activity recorded", "neutral"
+    elif action_key in action_labels:
+        action = action_labels[action_key]
+        action_kind = (
+            "danger" if action in {"Deleted", "Declined", "Disabled", "Failed sign-in"}
+            else "success" if action in {"Created", "Approved", "Sent invitation", "Activated"}
+            else "updated" if action == "Updated"
+            else "neutral"
+        )
+    else:
+        action = re.sub(r"[_\s]+", " ", raw_action).strip().capitalize()
+        action = action or "Activity recorded"
+        action_kind = "neutral"
+
+    description = _safe_audit_text(
+        metadata.get("description")
+        or metadata.get("target_name")
+        or metadata.get("resource_name")
+    )
+    target_id = _safe_audit_text(metadata.get("target_id"), 100)
+    resource = _safe_audit_text(
+        metadata.get("target_type")
+        or metadata.get("resource_type")
+        or metadata.get("table")
+    )
+    resource_labels = {
+        "units": "Unit",
+        "properties": "Property",
+        "tenants": "Tenant",
+        "landlords": "Landlord",
+        "tenant_inquiries": "Inquiry",
+        "payments": "Payment",
+        "maintenance_tickets": "Maintenance request",
+        "announcements": "Announcement",
+        "expenses": "Expense",
+        "users": "Account",
+    }
+    resource_label = resource_labels.get(resource.casefold(), resource.replace("_", " ").title())
+    if description:
+        target = description
+    elif target_id:
+        short_id = (
+            f"{target_id[:8]}…{target_id[-4:]}"
+            if len(target_id) > 16
+            else target_id
+        )
+        target = f"{resource_label or 'Record'} #{short_id}"
+    else:
+        target = "a record"
+
+    if action == "Failed sign-in":
+        summary = f"Failed sign-in for {actor}."
+    elif action == "Signed in":
+        summary = f"{actor} signed in."
+    else:
+        verb = {
+            "Sent invitation": "sent an invitation for",
+            "Activity recorded": "recorded activity for",
+        }.get(action, action.casefold())
+        summary = f"{actor} {verb} {target}."
+
+    return {
+        **row,
+        "actor": actor,
+        "action": action,
+        "action_kind": action_kind,
+        "target": target,
+        "summary": summary,
+        "details": summary,
+        "occurred": row.get("timestamp") or "—",
+    }
+
+
 def rows_for(section: str) -> list[dict[str, Any]]:
     config = getattr(g, "supabase_config", None) if has_request_context() else None
     if config is not None:
@@ -763,7 +905,9 @@ def rows_for(section: str) -> list[dict[str, Any]]:
             "SELECT data FROM records WHERE section = ? ORDER BY id DESC", (section,)
         ).fetchall()
     rows = [json.loads(row["data"]) for row in records]
-    if section == "announcements":
+    if section == "activity":
+        rows = [_normalize_audit_row(row) for row in rows]
+    elif section == "announcements":
         rows = [
             {
                 **row,
@@ -1355,22 +1499,7 @@ def live_rows_for(section: str) -> list[dict[str, Any]]:
         elif section in {"utility-history", "settings"}:
             normalized.append(dict(row))
         else:
-            details = row.get("details", "")
-            try:
-                details = json.loads(details) if isinstance(details, str) else details
-            except json.JSONDecodeError:
-                details = {}
-            if not isinstance(details, dict):
-                details = {}
-            normalized.append(
-                {
-                    **row,
-                    "actor": details.get("actor_email") or "Administrator",
-                    "action": row.get("action") or "Updated record",
-                    "target": details.get("description") or details.get("target_id") or "—",
-                    "occurred": row.get("timestamp") or "—",
-                }
-            )
+            normalized.append(_normalize_audit_row(row))
     return normalized
 
 
@@ -1635,10 +1764,13 @@ def dashboard():
     )
     for section, source_rows, date_key, title_key in recent_sources:
         for row in source_rows:
+            occurred_raw = (
+                row.get(date_key)
+                or row.get("paid_on")
+                or row.get("date")
+            )
             occurred = (
-                _as_datetime(row.get(date_key))
-                or _as_datetime(row.get("paid_on"))
-                or _as_datetime(row.get("date"))
+                _as_datetime(occurred_raw)
             )
             if occurred is None:
                 continue
@@ -1646,9 +1778,18 @@ def dashboard():
                 {
                     "section": section,
                     "record_id": row.get("id"),
-                    "title": str(row.get(title_key) or row.get("action") or "Record updated"),
-                    "detail": str(row.get("status") or row.get("target") or ""),
+                    "title": str(
+                        row.get("summary")
+                        if section == "activity"
+                        else row.get(title_key) or row.get("action") or "Record updated"
+                    ),
+                    "detail": str(
+                        "" if section == "activity"
+                        else row.get("status") or row.get("target") or ""
+                    ),
                     "occurred": occurred,
+                    "occurred_raw": str(occurred_raw),
+                    "occurred_field": date_key,
                 }
             )
     recent_activity.sort(key=lambda item: item["occurred"], reverse=True)
@@ -1659,7 +1800,9 @@ def dashboard():
                 section=item["section"],
                 record_id=str(item["record_id"]),
             )
-        item["occurred_label"] = item["occurred"].strftime("%b %d, %Y")
+        item["occurred_label"] = format_display_value(
+            item["occurred_raw"], item["occurred_field"]
+        )
 
     return render_template(
         "dashboard.html",
@@ -1799,6 +1942,8 @@ def record_detail(section: str, record_id: str):
         )
     if record is None:
         abort(404)
+    if section == "activity":
+        record = _normalize_audit_row(record)
 
     related_groups: list[dict[str, Any]] = []
     review_units: list[dict[str, Any]] = []

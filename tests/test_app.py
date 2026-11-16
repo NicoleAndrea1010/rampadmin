@@ -258,6 +258,85 @@ class RampAdminWebTests(unittest.TestCase):
         self.assertIn("Feb 3, 2026 · 3:04 PM UTC".encode(), response.data)
         self.assertIn(b'title="2026-02-03T15:04:00+00:00"', response.data)
 
+    def test_audit_rows_show_safe_business_summaries(self):
+        row = ramp_app._normalize_audit_row(
+            {
+                "id": "audit-1",
+                "action": "UPDATE",
+                "details": ramp_app._json_dumps(
+                    {
+                        "actor_email": "maria@example.com",
+                        "description": "Unit #104 (Beachfront Villa)",
+                        "query": "UPDATE units SET rent = 5200",
+                    }
+                ),
+                "timestamp": "2026-02-03T15:04:00+00:00",
+            }
+        )
+        self.assertEqual(row["actor"], "maria@example.com")
+        self.assertEqual(row["action"], "Updated")
+        self.assertEqual(row["action_kind"], "updated")
+        self.assertEqual(row["summary"], "maria@example.com updated Unit #104 (Beachfront Villa).")
+        self.assertNotIn("UPDATE units SET", row["details"])
+
+        raw_query = ramp_app._normalize_audit_row(
+            {
+                "id": "audit-2",
+                "action": "UPDATE units SET rent = 5200",
+                "details": ramp_app._json_dumps(
+                    {"description": "SELECT * FROM units"}
+                ),
+                "timestamp": "2026-02-03T15:04:00+00:00",
+            }
+        )
+        self.assertEqual(raw_query["action"], "Activity recorded")
+        self.assertNotIn("SELECT * FROM", str(raw_query))
+        self.assertNotIn("UPDATE units SET", str(raw_query))
+
+    def test_audit_pages_never_render_raw_query_details(self):
+        record_id = str(uuid4())
+        raw_query = "UPDATE units SET rent = 5200"
+        with ramp_app.get_db() as db:
+            db.execute(
+                "INSERT INTO records (section, id, data) VALUES (?, ?, ?)",
+                (
+                    "activity",
+                    record_id,
+                    ramp_app._json_dumps(
+                        {
+                            "id": record_id,
+                            "action": "UPDATE",
+                            "details": ramp_app._json_dumps(
+                                {
+                                    "actor_email": "admin@example.com",
+                                    "description": "SELECT * FROM units",
+                                    "query": raw_query,
+                                }
+                            ),
+                            "timestamp": "2026-02-03T15:04:00+00:00",
+                        }
+                    ),
+                ),
+            )
+
+        listing = self.client.get("/activity")
+        detail = self.client.get(f"/activity/{record_id}")
+        dashboard = self.client.get("/")
+
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertIn(b"admin@example.com updated a record.", listing.data)
+        self.assertIn(b"admin@example.com updated a record.", detail.data)
+        self.assertIn(b"admin@example.com updated a record.", dashboard.data)
+        self.assertIn(
+            b'data-local-time datetime="2026-02-03T15:04:00+00:00"',
+            dashboard.data,
+        )
+        self.assertNotIn(raw_query.encode(), listing.data)
+        self.assertNotIn(raw_query.encode(), detail.data)
+        self.assertNotIn(b"SELECT * FROM units", detail.data)
+
     def test_csv_export_escapes_spreadsheet_formulas(self):
         with ramp_app.get_db() as db:
             db.execute(

@@ -47,7 +47,16 @@
         <tr data-record-id="{{ row.id }}">
           {% for key, label in config.columns %}
             <td data-field="{{ key }}" data-label="{{ label }}"{% if key in ['rent', 'monthly_rent', 'amount', 'balance'] %} data-numeric="true"{% endif %}>
-              {% if key == 'status' %}
+              {% if section == 'activity' and key == 'summary' %}
+                <span class="audit-summary" data-kind="{{ row.action_kind }}">
+                  <span class="avatar avatar-0">{{ row.actor[:1]|upper }}</span>
+                  <span>{{ row.summary }}</span>
+                </span>
+              {% elif section == 'activity' and key == 'occurred' %}
+                <time class="audit-time" data-local-time datetime="{{ row.occurred }}" title="{{ row.occurred }}">
+                  {{ row.occurred|display_value(key) }}
+                </time>
+              {% elif key == 'status' %}
                 <span class="status-pill status-{{ row[key]|lower|replace(' ', '-') }}">{{ row[key] }}</span>
               {% elif key == 'name' and section == 'landlords' %}
                 <span class="person-cell"><span class="avatar avatar-{{ loop.index0 % 5 }}">{{ row.name[:1] }}{{ (row.name.split()[-1][:1] if row.name.split()|length > 1 else '') }}</span><span><strong>{{ row.name }}</strong><small>{{ row.email }}</small></span></span>

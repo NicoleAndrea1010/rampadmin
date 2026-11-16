@@ -103,12 +103,12 @@
         {% if item.url %}
         <a class="activity-summary-row" href="{{ item.url }}">
           <span><strong>{{ item.title }}</strong><small>{{ item.detail or item.section|title }}</small></span>
-          <time>{{ item.occurred_label }}</time>
+          <time data-local-time datetime="{{ item.occurred_raw }}">{{ item.occurred_label }}</time>
         </a>
         {% else %}
         <div class="activity-summary-row">
           <span><strong>{{ item.title }}</strong><small>{{ item.detail or item.section|title }}</small></span>
-          <time>{{ item.occurred_label }}</time>
+          <time data-local-time datetime="{{ item.occurred_raw }}">{{ item.occurred_label }}</time>
         </div>
         {% endif %}
       {% endfor %}

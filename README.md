@@ -38,8 +38,10 @@ totals. Announcements can be created, edited, and archived without hard
 deletion. Existing settings records can be updated, but the app does not create
 settings rows. Notifications, events, public listings, tenant-document
 metadata, utility-rate history, and RFID access history are read-only; audit
-history is also read-only. Soft-linked records are linked only when a matching
-record can be found.
+history is also read-only. Audit history uses human-readable action labels and
+allowlisted actor/target metadata rather than rendering raw details; timestamps
+show relative local time with the exact local time on hover. Soft-linked records
+are linked only when a matching record can be found.
 
 Payment proof, tenant document, and photo links are not exposed because this
 web project has no verified private Storage URL flow. RFID card identifiers are
