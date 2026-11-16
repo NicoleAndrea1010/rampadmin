@@ -10,62 +10,140 @@
   <a class="button button-primary" href="{{ url_for('landlord_form') }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-plus"></use></svg> Add landlord</a>
 </div>
 
-<div class="stats-grid dashboard-stats">
-  <a class="stat-card stat-card-featured" href="{{ url_for('records_page', section='properties') }}">
-    <span class="stat-top"><span class="stat-label">Active units</span><span class="stat-icon blue"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-building"></use></svg></span></span>
-    <span class="stat-value">{{ stats.properties }}</span>
+<section class="dashboard-overview" aria-label="Portfolio overview">
+  <a class="dashboard-overview-card overview-revenue" href="{{ url_for('records_page', section='payments') }}">
+    <span class="overview-card-top">
+      <span class="overview-label">Rent collected · {{ month_label }}</span>
+      <span class="overview-icon icon-mint"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-banknote"></use></svg></span>
+    </span>
+    <strong class="overview-value">{{ currency(stats.collected) }}</strong>
+    <span class="overview-card-foot">
+      {% if revenue_change_percent is not none %}
+      <span class="trend-indicator{% if revenue_change_percent < 0 %} trend-down{% endif %}">{% if revenue_change_percent > 0 %}+{% endif %}{{ revenue_change_percent }}% vs last month</span>
+      {% else %}
+      <span class="overview-note">Paid rent transactions</span>
+      {% endif %}
+      {% if revenue_has_data %}
+      <svg class="overview-sparkline" viewBox="80 18 540 114" aria-hidden="true">
+        <path d="{{ revenue_path }}"></path>
+      </svg>
+      {% endif %}
+    </span>
   </a>
-  <a class="stat-card" href="{{ url_for('records_page', section='inquiries', status='Pending') }}">
-    <span class="stat-top"><span class="stat-label">Pending inquiries</span><span class="stat-icon violet"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-message"></use></svg></span></span>
-    <span class="stat-value">{{ stats.pending_inquiries }}</span>
-  </a>
-  <a class="stat-card" href="{{ url_for('records_page', section='payments', status='Pending') }}">
-    <span class="stat-top"><span class="stat-label">Pending payments</span><span class="stat-icon mint"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-card"></use></svg></span></span>
-    <span class="stat-value">{{ stats.pending_payments }}</span>
-  </a>
-  <a class="stat-card" href="{{ url_for('records_page', section='payments', status='Overdue') }}">
-    <span class="stat-top"><span class="stat-label">Marked overdue</span><span class="stat-icon amber"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-alert"></use></svg></span></span>
-    <span class="stat-value">{{ stats.overdue_payments }}</span>
-  </a>
-  <a class="stat-card" href="{{ url_for('records_page', section='maintenance') }}">
-    <span class="stat-top"><span class="stat-label">Open maintenance</span><span class="stat-icon blue"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-wrench"></use></svg></span></span>
-    <span class="stat-value">{{ stats.open_tickets }}</span>
-    {% if stats.high_priority_tickets or stats.maintenance_properties %}
-    <span class="stat-foot">{% if stats.high_priority_tickets %}{{ stats.high_priority_tickets }} high priority{% endif %}{% if stats.high_priority_tickets and stats.maintenance_properties %} · {% endif %}{% if stats.maintenance_properties %}{{ stats.maintenance_properties }} unit{% if stats.maintenance_properties != 1 %}s{% endif %} flagged{% endif %}</span>
-    {% endif %}
-  </a>
-  <a class="stat-card" href="{{ url_for('records_page', section='tenants') }}">
-    <span class="stat-top"><span class="stat-label">Leases ending · 30 days</span><span class="stat-icon violet"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-calendar"></use></svg></span></span>
-    <span class="stat-value">{{ stats.lease_ending_soon }}</span>
-  </a>
-  <a class="stat-card stat-card-featured" href="{{ url_for('records_page', section='payments') }}">
-    <span class="stat-top"><span class="stat-label">Rent collected · {{ month_label }}</span><span class="stat-icon mint"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-banknote"></use></svg></span></span>
-    <span class="stat-value money">{{ currency(stats.collected) }}</span>
-  </a>
-  <a class="stat-card" href="{{ url_for('records_page', section='landlords') }}">
-    <span class="stat-top"><span class="stat-label">Active landlords</span><span class="stat-icon amber"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-users"></use></svg></span></span>
-    <span class="stat-value">{{ stats.landlords }}</span>
-  </a>
-</div>
 
-{% if unit_status_counts %}
-<section class="unit-status-strip" aria-label="Active unit counts by status">
-  <strong>Unit status</strong>
-  {% for unit_status, count in unit_status_counts|dictsort %}
-  <a href="{{ url_for('records_page', section='properties', status=unit_status) }}">
-    <span>{{ unit_status }}</span><b>{{ count }}</b>
+  <a class="dashboard-overview-card overview-units" href="{{ url_for('records_page', section='properties') }}" aria-label="Unit occupancy and active units">
+    <span class="overview-card-top">
+      <span class="overview-label">Active units</span>
+      <span class="overview-icon icon-blue"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-building"></use></svg></span>
+    </span>
+    <strong class="overview-value">{{ stats.properties }}</strong>
+    <span class="overview-note">{{ stats.occupied_properties }} occupied · {{ stats.vacant_properties }} vacant</span>
+    <span class="occupancy-rate-label">{{ stats.occupancy_rate }}% occupied</span>
+    <span class="occupancy-progress" role="img" aria-label="{{ stats.occupied_properties }} of {{ stats.properties }} active units occupied">
+      {% for unit_status, count in unit_status_counts|dictsort %}
+      <span class="occupancy-segment status-{{ unit_status|lower|replace(' ', '-') }}" style="flex: {{ count }} 1 0"></span>
+      {% endfor %}
+    </span>
   </a>
-  {% endfor %}
+
+  <a class="dashboard-overview-card" href="{{ url_for('records_page', section='tenants') }}">
+    <span class="overview-card-top">
+      <span class="overview-label">Active leases</span>
+      <span class="overview-icon icon-violet"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-calendar"></use></svg></span>
+    </span>
+    <strong class="overview-value">{{ stats.active_leases }}</strong>
+    <span class="overview-note">{{ stats.lease_ending_soon }} ending within 30 days</span>
+  </a>
+
+  <a class="dashboard-overview-card" href="{{ url_for('records_page', section='landlords') }}">
+    <span class="overview-card-top">
+      <span class="overview-label">Active landlords</span>
+      <span class="overview-icon icon-amber"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-users"></use></svg></span>
+    </span>
+    <strong class="overview-value">{{ stats.landlords }}</strong>
+    <span class="overview-note">Current account status</span>
+  </a>
 </section>
-{% endif %}
 
-<div class="dashboard-period-note">
-  <form method="get" class="period-filter">
-    <label for="dashboardPeriod">Rent period</label>
-    <input id="dashboardPeriod" type="month" name="period" min="2025-01" value="{{ selected_period }}">
-    <button class="button button-secondary" type="submit">Apply</button>
-  </form>
-</div>
+<section class="dashboard-visuals" aria-label="Portfolio charts">
+  <section class="panel dashboard-chart-panel">
+    <div class="dashboard-chart-header">
+      <div>
+        <h2>Revenue &amp; expenses</h2>
+        <p>Monthly totals for the six months ending {{ month_label }}</p>
+      </div>
+      <form method="get" class="period-filter">
+        <label for="dashboardPeriod">End month</label>
+        <input id="dashboardPeriod" type="month" name="period" min="2025-01" value="{{ selected_period }}">
+        <button class="button button-secondary" type="submit">Apply</button>
+      </form>
+    </div>
+    {% if trend_has_data %}
+    <div class="dashboard-chart-legend" aria-hidden="true">
+      <span><i class="legend-revenue"></i>Rent collected</span>
+      <span><i class="legend-expenses"></i>Expenses</span>
+    </div>
+    <svg class="revenue-chart" viewBox="0 0 650 166" role="img" aria-labelledby="revenueChartTitle revenueChartDescription">
+      <title id="revenueChartTitle">Six-month rent and expense trends</title>
+      <desc id="revenueChartDescription">Monthly paid rent and recorded expenses from {{ trend_series[0].full_label }} through {{ trend_series[-1].full_label }}. Hover or focus a plotted point to read its amount.</desc>
+      <defs>
+        <linearGradient id="revenueFill" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stop-color="#3478ec" stop-opacity=".2"></stop>
+          <stop offset="100%" stop-color="#3478ec" stop-opacity="0"></stop>
+        </linearGradient>
+      </defs>
+      {% for tick in chart_ticks %}
+      <line class="chart-gridline" x1="80" y1="{{ tick.y - 4 }}" x2="620" y2="{{ tick.y - 4 }}"></line>
+      <text class="chart-axis-label" x="0" y="{{ tick.y }}">{{ tick.label }}</text>
+      {% endfor %}
+      <path class="chart-revenue-area" d="{{ revenue_area_path }}"></path>
+      <path class="chart-line chart-revenue-line" d="{{ revenue_path }}"></path>
+      <path class="chart-line chart-expense-line" d="{{ expense_path }}"></path>
+      {% for point in trend_series %}
+      <circle class="chart-point chart-point-revenue" cx="{{ point.x }}" cy="{{ point.revenue_y }}" r="3.5" tabindex="0">
+        <title>{{ point.full_label }}: {{ currency(point.revenue) }} rent collected</title>
+      </circle>
+      <circle class="chart-point chart-point-expenses" cx="{{ point.x }}" cy="{{ point.expenses_y }}" r="3.5" tabindex="0">
+        <title>{{ point.full_label }}: {{ currency(point.expenses) }} expenses</title>
+      </circle>
+      <text class="chart-month-label" x="{{ point.x }}" y="155" text-anchor="middle">{{ point.label }}</text>
+      {% endfor %}
+    </svg>
+    {% else %}
+    <div class="chart-empty-state">No rent or expense records for these six months yet.</div>
+    {% endif %}
+  </section>
+
+  <section class="panel dashboard-chart-panel unit-breakdown-panel">
+    <div class="dashboard-chart-header">
+      <div>
+        <h2>Unit status</h2>
+        <p>{{ stats.properties }} active units in your portfolio</p>
+      </div>
+    </div>
+    {% if unit_status_counts %}
+    <div class="unit-status-bar" role="img" aria-label="Unit status breakdown">
+      {% for unit_status, count in unit_status_counts|dictsort %}
+      <span class="unit-status-segment status-{{ unit_status|lower|replace(' ', '-') }}" style="flex: {{ count }} 1 0" title="{{ unit_status }}: {{ count }}"></span>
+      {% endfor %}
+    </div>
+    <div class="unit-status-legend">
+      {% for unit_status, count in unit_status_counts|dictsort %}
+      {% set status_percent = (count / stats.properties * 100)|round(1) %}
+      <a href="{{ url_for('records_page', section='properties', status=unit_status) }}">
+        <span class="unit-legend-name"><i class="unit-status-dot status-{{ unit_status|lower|replace(' ', '-') }}"></i>{{ unit_status }}</span>
+        <span class="unit-status-mini-progress" aria-hidden="true">
+          <i class="status-{{ unit_status|lower|replace(' ', '-') }}" style="width: {{ status_percent }}%"></i>
+        </span>
+        <strong>{{ count }}</strong>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="chart-empty-state">Add units to see their status breakdown.</div>
+    {% endif %}
+  </section>
+</section>
 
 <div class="dashboard-lower-grid">
   <section class="panel follow-up-panel">
@@ -73,10 +151,13 @@
     {% if attention_items %}
     <div class="attention-list">
       {% for item in attention_items %}
-      <a class="attention-row" href="{{ url_for('records_page', section=item.section, status=item.status or 'All') }}">
-        <strong>{{ item.title }}</strong>
-        <span class="attention-count">{{ item.count }} {{ item.unit if item.count == 1 else item.unit_plural }}</span>
-        <span class="attention-arrow" aria-hidden="true"><svg class="icon"><use href="{{ url_for('static', filename='icons.svg') }}#icon-arrow-right"></use></svg></span>
+      <a class="attention-row attention-{{ item.section }}" href="{{ url_for('records_page', section=item.section, status=item.status or 'All') }}">
+        <span class="attention-indicator" aria-hidden="true"></span>
+        <span class="attention-copy">
+          <strong>{{ item.title }}</strong>
+          <small>{{ item.count }} {{ item.unit if item.count == 1 else item.unit_plural }} need{% if item.count == 1 %}s{% endif %} review</small>
+        </span>
+        <span class="attention-action">Review <svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-arrow-right"></use></svg></span>
       </a>
       {% endfor %}
     </div>
@@ -94,13 +175,15 @@
     <div class="activity-summary-list">
       {% for item in recent_activity %}
         {% if item.url %}
-        <a class="activity-summary-row" href="{{ item.url }}">
-          <span><strong>{{ item.title }}</strong><small>{{ item.detail or item.section|title }}</small></span>
+        <a class="activity-summary-row activity-{{ item.section }}" href="{{ item.url }}">
+          <span class="activity-indicator" aria-hidden="true"></span>
+          <span class="activity-copy"><strong>{{ item.title }}</strong><small>{{ item.detail or item.section|title }}</small></span>
           <time data-local-time datetime="{{ item.occurred_raw }}">{{ item.occurred_label }}</time>
         </a>
         {% else %}
-        <div class="activity-summary-row">
-          <span><strong>{{ item.title }}</strong><small>{{ item.detail or item.section|title }}</small></span>
+        <div class="activity-summary-row activity-{{ item.section }}">
+          <span class="activity-indicator" aria-hidden="true"></span>
+          <span class="activity-copy"><strong>{{ item.title }}</strong><small>{{ item.detail or item.section|title }}</small></span>
           <time data-local-time datetime="{{ item.occurred_raw }}">{{ item.occurred_label }}</time>
         </div>
         {% endif %}

@@ -19,7 +19,7 @@
       <a class="brand login-brand" href="{{ url_for('login') }}">
         <img class="brand-logo" src="{{ url_for('static', filename='ramp_admin_logo.png') }}" alt="RAMP Admin">
       </a>
-      <div class="login-brand-message"><span class="login-orbit"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-building"></use></svg></span><p>RENTAL ADMINISTRATION</p><h1>Maintenance Platform</h1><span>Properties, tenants, payments, and maintenance in one RAMP workspace.</span></div>
+      <div class="login-brand-message"><span class="login-orbit"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-building"></use></svg></span><p>Rental Administration</p><h1>Maintenance Platform</h1></div>
       <span class="login-brand-footer">RAMP ADMIN</span>
     </section>
     <section class="login-main">
@@ -27,7 +27,6 @@
         <p class="login-kicker">WELCOME BACK</p>
         <h2>Sign in to RAMP</h2>
         <p class="login-subtitle">Enter your email and password to access your account.</p>
-        {% if supabase_connected %}<p class="login-connection"><span class="online-dot"></span> Supabase project configuration detected</p>{% endif %}
         {% with messages = get_flashed_messages(with_categories=true) %}
           {% if messages %}<div class="login-messages">{% for category, message in messages %}<div class="flash flash-{{ category }}">{{ message }}</div>{% endfor %}</div>{% endif %}
         {% endwith %}
@@ -52,7 +51,6 @@
             </div>
             <button type="submit" class="button button-primary login-submit">Sign in <svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-arrow-right"></use></svg></button>
           </form>
-          <p class="login-security"><span><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-lock"></use></svg></span> Authenticated by Supabase. Only approved super-admin accounts can access this workspace.</p>
           <script>
             const passwordInput = document.getElementById('password');
             const toggleButton = document.querySelector('.password-toggle');
@@ -69,7 +67,7 @@
           </script>
         {% endif %}
       </div>
-      <footer class="login-footer"><span>© {{ current_date[-4:] }} RAMP Property Management</span><span>Secure administrator access</span></footer>
+      <footer class="login-footer"><span>© {{ current_date[-4:] }} RAMP Property Management</span>{% if not configuration_missing %}<span>Authenticated by Supabase</span>{% endif %}</footer>
     </section>
   </main>
   <script src="{{ url_for('static', filename='form-ux.js') }}?v=2" defer></script>

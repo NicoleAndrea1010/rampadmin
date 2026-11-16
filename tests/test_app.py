@@ -132,8 +132,13 @@ class RampAdminWebTests(unittest.TestCase):
         self.assertIn(b"/static/ramp_admin_logo.png", response.data)
         self.assertIn(b"#icon-building", response.data)
         self.assertIn(b"#icon-eye-off", response.data)
-        self.assertIn(b"RENTAL ADMINISTRATION", response.data)
+        self.assertIn(b"Rental Administration", response.data)
         self.assertIn(b"Maintenance Platform", response.data)
+        self.assertNotIn(b"Properties, tenants, payments, and maintenance", response.data)
+        self.assertNotIn(b"Supabase project configuration detected", response.data)
+        self.assertNotIn(b"Only approved super-admin accounts can access", response.data)
+        self.assertNotIn(b"Secure administrator access", response.data)
+        self.assertIn(b"Authenticated by Supabase", response.data)
         self.assertIn(b'class="button button-primary login-submit"', response.data)
 
     def test_rpc_helper_uses_authenticated_supabase_rest_endpoint(self):
@@ -176,12 +181,16 @@ class RampAdminWebTests(unittest.TestCase):
         self.assertIn(b"Follow up", response.data)
         self.assertIn(b"Recent activity", response.data)
         self.assertIn(b"Active units", response.data)
+        self.assertIn(b"Unit occupancy", response.data)
+        self.assertIn(b"Active leases", response.data)
+        self.assertIn(b"Revenue &amp; expenses", response.data)
+        self.assertIn(b"Unit status", response.data)
         self.assertIn(b"Rent collected", response.data)
         self.assertIn(b"All clear.", response.data)
         self.assertNotIn(b"Based on stored payment status", response.data)
         self.assertNotIn(b"No overdue status is inferred", response.data)
         self.assertNotIn(b"Paid rent transactions only", response.data)
-        self.assertNotIn(b"Current account status", response.data)
+        self.assertIn(b"Current account status", response.data)
         self.assertNotIn(b"Nothing needs follow-up right now.", response.data)
         self.assertNotIn(b"Registered tenant accounts", response.data)
         self.assertNotIn(b"vs. last month", response.data)
@@ -193,6 +202,71 @@ class RampAdminWebTests(unittest.TestCase):
         self.assertIn(b'min="2025-01"', response.data)
         self.assertEqual(self.client.get("/?period=2024-12").status_code, 400)
 
+    def test_dashboard_charts_use_real_six_month_payment_expense_and_unit_data(self):
+        lease_end = (ramp_app.datetime.now() + ramp_app.timedelta(days=14)).strftime(
+            "%Y-%m-%d"
+        )
+        records = (
+            ("properties", 1, {"status": "Occupied"}),
+            ("properties", 2, {"status": "Occupied"}),
+            ("properties", 3, {"status": "Vacant"}),
+            ("properties", 4, {"status": "Maintenance"}),
+            ("tenants", 1, {"status": "Active", "lease_end": lease_end}),
+            (
+                "payments",
+                1,
+                {
+                    "status": "Paid",
+                    "transaction_type": "rent",
+                    "payment_date": "2026-10-12",
+                    "amount": 1000,
+                },
+            ),
+            (
+                "payments",
+                2,
+                {
+                    "status": "Paid",
+                    "transaction_type": "rent",
+                    "payment_date": "2026-11-12",
+                    "amount": 2000,
+                },
+            ),
+            (
+                "payments",
+                3,
+                {
+                    "status": "Pending",
+                    "transaction_type": "rent",
+                    "payment_date": "2026-11-12",
+                    "amount": 9000,
+                },
+            ),
+            ("expenses", 1, {"date": "2026-10-15", "amount": 250}),
+            ("expenses", 2, {"date": "2026-11-15", "amount": 500}),
+        )
+        with ramp_app.get_db() as db:
+            db.executemany(
+                "INSERT INTO records (section, id, data) VALUES (?, ?, ?)",
+                [
+                    (section, record_id, ramp_app._json_dumps(data))
+                    for section, record_id, data in records
+                ],
+            )
+
+        response = self.client.get("/?period=2026-11")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b">50% occupied</span>", response.data)
+        self.assertIn(b"100% vs last month", response.data)
+        self.assertIn(b"November 2026: \xe2\x82\xb12,000 rent collected", response.data)
+        self.assertIn(b"November 2026: \xe2\x82\xb1500 expenses", response.data)
+        self.assertIn(b"chart-revenue-line", response.data)
+        self.assertIn(b"chart-axis-label", response.data)
+        self.assertIn(b"unit-status-mini-progress", response.data)
+        self.assertIn(b" C ", response.data)
+        self.assertIn(b"2 of 4 active units occupied", response.data)
+        self.assertIn(b"1 ending within 30 days", response.data)
+
     def test_dashboard_attention_inquiry_count_uses_correct_plural(self):
         with ramp_app.get_db() as db:
             db.execute(
@@ -201,7 +275,7 @@ class RampAdminWebTests(unittest.TestCase):
             )
 
         one = self.client.get("/")
-        self.assertIn(b">1 inquiry</span>", one.data)
+        self.assertIn(b">1 inquiry needs review</small>", one.data)
         self.assertNotIn(b"inquirys", one.data)
 
         with ramp_app.get_db() as db:
@@ -211,7 +285,7 @@ class RampAdminWebTests(unittest.TestCase):
             )
 
         two = self.client.get("/")
-        self.assertIn(b">2 inquiries</span>", two.data)
+        self.assertIn(b">2 inquiries need review</small>", two.data)
 
     def test_terms_draft_is_reachable_from_settings(self):
         settings = self.client.get("/settings")
@@ -2046,7 +2120,7 @@ class RampAdminWebTests(unittest.TestCase):
             self.assertIn("/login", protected.headers["Location"])
             login = self.client.get("/login")
         self.assertEqual(login.status_code, 200)
-        self.assertIn(b"approved super-admin account", login.data)
+        self.assertNotIn(b"approved super-admin account", login.data)
         self.assertIn(b"Forgot password?", login.data)
         self.assertIn(b"password-icon-show", login.data)
         self.assertIn(b"password-icon-hide", login.data)

@@ -1727,6 +1727,7 @@ def dashboard():
     landlords = rows_for("landlords")
     properties = rows_for("properties")
     payments = rows_for("payments")
+    expenses = rows_for("expenses")
     maintenance = rows_for("maintenance")
     tenants = rows_for("tenants")
     inquiries = rows_for("inquiries")
@@ -1744,6 +1745,16 @@ def dashboard():
             abort(400, description="Choose a month from January 2025 onward.")
     else:
         selected_month = now.replace(day=1)
+    trend_months = []
+    for offset in range(5, -1, -1):
+        month_index = selected_month.year * 12 + selected_month.month - 1 - offset
+        trend_months.append(
+            datetime(month_index // 12, month_index % 12 + 1, 1)
+        )
+    trend_totals = {
+        month.strftime("%Y-%m"): {"revenue": 0.0, "expenses": 0.0}
+        for month in trend_months
+    }
     paid_this_month = 0
     for payment in payments:
         if (
@@ -1757,11 +1768,122 @@ def dashboard():
             or payment.get("date")
             or payment.get("paid_on")
         )
-        if paid_at is not None and (
-            paid_at.year,
-            paid_at.month,
-        ) == (selected_month.year, selected_month.month):
-            paid_this_month += _number(payment.get("amount"))
+        if paid_at is not None:
+            month_key = paid_at.strftime("%Y-%m")
+            if month_key in trend_totals:
+                trend_totals[month_key]["revenue"] += _number(
+                    payment.get("amount")
+                )
+            if (paid_at.year, paid_at.month) == (
+                selected_month.year,
+                selected_month.month,
+            ):
+                paid_this_month += _number(payment.get("amount"))
+    for expense in expenses:
+        expense_date = _as_datetime(expense.get("date"))
+        if expense_date is not None:
+            month_key = expense_date.strftime("%Y-%m")
+            if month_key in trend_totals:
+                trend_totals[month_key]["expenses"] += _number(
+                    expense.get("amount")
+                )
+
+    chart_left = 80
+    chart_right = 620
+    chart_top = 18
+    chart_bottom = 132
+    chart_maximum = max(
+        (
+            amount
+            for totals in trend_totals.values()
+            for amount in totals.values()
+        ),
+        default=0,
+    ) or 1
+    chart_step = (chart_right - chart_left) / max(len(trend_months) - 1, 1)
+    chart_ticks = [
+        {"y": chart_top + 4, "label": currency(chart_maximum)},
+        {
+            "y": round((chart_top + chart_bottom) / 2) + 4,
+            "label": currency(chart_maximum / 2),
+        },
+        {"y": chart_bottom + 4, "label": currency(0)},
+    ]
+    trend_series = []
+    for index, month in enumerate(trend_months):
+        totals = trend_totals[month.strftime("%Y-%m")]
+        x = round(chart_left + index * chart_step, 1)
+        trend_series.append(
+            {
+                "label": month.strftime("%b"),
+                "full_label": month.strftime("%B %Y"),
+                "x": x,
+                "revenue": totals["revenue"],
+                "expenses": totals["expenses"],
+                "revenue_y": round(
+                    chart_bottom
+                    - totals["revenue"] / chart_maximum * (chart_bottom - chart_top),
+                    1,
+                ),
+                "expenses_y": round(
+                    chart_bottom
+                    - totals["expenses"] / chart_maximum * (chart_bottom - chart_top),
+                    1,
+                ),
+            }
+        )
+    def smooth_chart_path(y_key: str) -> str:
+        chart_points = [
+            (point["x"], point[y_key]) for point in trend_series
+        ]
+        commands = [f"M {chart_points[0][0]} {chart_points[0][1]}"]
+        for index in range(len(chart_points) - 1):
+            current = chart_points[index]
+            following = chart_points[index + 1]
+            previous = chart_points[index - 1] if index else current
+            after_following = (
+                chart_points[index + 2]
+                if index + 2 < len(chart_points)
+                else following
+            )
+            first_control = (
+                current[0] + (following[0] - previous[0]) / 6,
+                current[1] + (following[1] - previous[1]) / 6,
+            )
+            second_control = (
+                following[0] - (after_following[0] - current[0]) / 6,
+                following[1] - (after_following[1] - current[1]) / 6,
+            )
+            commands.append(
+                f"C {first_control[0]:.1f} {first_control[1]:.1f} "
+                f"{second_control[0]:.1f} {second_control[1]:.1f} "
+                f"{following[0]} {following[1]}"
+            )
+        return " ".join(commands)
+
+    revenue_path = smooth_chart_path("revenue_y")
+    expense_path = smooth_chart_path("expenses_y")
+    revenue_area_path = (
+        f"{revenue_path} L {trend_series[-1]['x']} {chart_bottom} "
+        f"L {trend_series[0]['x']} {chart_bottom} Z"
+    )
+    trend_has_data = any(
+        totals["revenue"] or totals["expenses"]
+        for totals in trend_totals.values()
+    )
+    revenue_has_data = any(
+        totals["revenue"] for totals in trend_totals.values()
+    )
+    previous_month_revenue = trend_series[-2]["revenue"]
+    revenue_change_percent = (
+        round(
+            (trend_series[-1]["revenue"] - previous_month_revenue)
+            / previous_month_revenue
+            * 100
+        )
+        if previous_month_revenue
+        else None
+    )
 
     active_properties = [
         item for item in properties
@@ -1811,11 +1933,13 @@ def dashboard():
         if str(payment.get("status", "")).casefold() == "overdue"
     ]
     lease_ending_soon = []
+    active_leases = []
     for tenant in tenants:
         if tenant.get("is_archived") is True:
             continue
         if str(tenant.get("status", "")).casefold() not in {"active", "current"}:
             continue
+        active_leases.append(tenant)
         lease_end = _as_datetime(tenant.get("lease_end"))
         if lease_end and today <= lease_end.date() <= today + timedelta(days=30):
             lease_ending_soon.append(tenant)
@@ -1825,7 +1949,11 @@ def dashboard():
             str(row.get("status", "")).casefold() == "active" for row in landlords
         ),
         "properties": len(active_properties),
+        "active_leases": len(active_leases),
         "collected": paid_this_month,
+        "occupancy_rate": round(
+            occupied_properties / len(active_properties) * 100
+        ) if active_properties else 0,
         "occupied_properties": occupied_properties,
         "vacant_properties": vacant_properties,
         "reserved_properties": reserved_properties,
@@ -1856,6 +1984,17 @@ def dashboard():
                 "unit": "inquiry",
                 "unit_plural": "inquiries",
                 "section": "inquiries",
+                "status": "Pending",
+            }
+        )
+    if pending_payments:
+        attention_items.append(
+            {
+                "count": len(pending_payments),
+                "title": "Pending payments",
+                "unit": "payment",
+                "unit_plural": "payments",
+                "section": "payments",
                 "status": "Pending",
             }
         )
@@ -1937,6 +2076,14 @@ def dashboard():
         month_label=selected_month.strftime("%B %Y"),
         selected_period=selected_month.strftime("%Y-%m"),
         unit_status_counts=unit_status_counts,
+        trend_series=trend_series,
+        revenue_path=revenue_path,
+        revenue_area_path=revenue_area_path,
+        expense_path=expense_path,
+        chart_ticks=chart_ticks,
+        trend_has_data=trend_has_data,
+        revenue_has_data=revenue_has_data,
+        revenue_change_percent=revenue_change_percent,
         recent_activity=recent_activity[:6],
     )
 
