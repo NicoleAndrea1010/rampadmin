@@ -18,7 +18,8 @@
   </div>
 </div>
 
-<div class="detail-layout">
+{% set visible_related_groups = related_groups|selectattr('items')|list %}
+<div class="detail-layout {% if section == 'inquiries' %}inquiry-detail-layout{% endif %}">
   <div class="detail-main">
     {% if section == 'documents' %}
     <section class="panel detail-panel"><p class="page-subtitle">File opening is disabled until a private Supabase Storage access path is verified. This page displays metadata only.</p></section>
@@ -40,27 +41,35 @@
     </section>
     {% endfor %}
 
+  </div>
+
+  {% if visible_related_groups or (section == 'inquiries' and can_review) %}
+  <aside class="detail-related {% if section == 'inquiries' %}inquiry-review-column{% endif %}">
     {% if can_review %}
     <section class="panel detail-panel inquiry-review-panel">
       <div class="panel-header">
-        <div><h2>Review inquiry</h2><p>Decisions are recorded by the existing Supabase review workflow.</p></div>
+        <div><h2>Review inquiry</h2><p>Review the application and choose an available unit, if applicable.</p></div>
       </div>
       <form method="post" action="{{ url_for('review_inquiry', record_id=record.id) }}" data-requires-online="true" data-confirm="Submit a decision for this inquiry?" data-loading-label="Submitting review…">
-        <label class="form-field">
-          <span>Assign unit</span>
-          <select name="assigned_unit_id">
-            <option value="">No unit assigned</option>
-            {% for unit in review_units %}
-            <option value="{{ unit.id }}" {% if record.assigned_unit_id|string == unit.id|string %}selected{% endif %}>
-              {{ unit.unit_number or unit.name or unit.title or unit.id }} · {{ unit.status or 'Status unavailable' }}
-            </option>
-            {% endfor %}
-          </select>
-        </label>
-        <label class="form-field">
-          <span>Internal note</span>
-          <textarea name="internal_note" maxlength="2000" rows="4">{{ record.internal_note or '' }}</textarea>
-        </label>
+        <div class="inquiry-review-fields">
+          <label class="form-field">
+            <span>Assign unit</span>
+            <select name="assigned_unit_id">
+              <option value="">No unit assigned (optional)</option>
+              {% for unit in review_units %}
+              <option value="{{ unit.id }}" {% if record.assigned_unit_id|string == unit.id|string %}selected{% endif %}>
+                {{ unit.unit_number or unit.name or unit.title or unit.id }} · Vacant
+              </option>
+              {% endfor %}
+            </select>
+            <small class="form-help">Only vacant, non-archived units without an assigned tenant are listed.</small>
+          </label>
+          <label class="form-field">
+            <span>Internal note</span>
+            <textarea name="internal_note" maxlength="2000" rows="4" aria-describedby="inquiry-note-help">{{ record.internal_note or '' }}</textarea>
+            <small class="form-help" id="inquiry-note-help">Do not include passwords, payment card details, or government ID numbers.</small>
+          </label>
+        </div>
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <div class="form-actions inquiry-review-actions">
           <button class="button button-secondary" type="submit" name="decision" value="decline">Decline inquiry</button>
@@ -69,11 +78,7 @@
       </form>
     </section>
     {% endif %}
-  </div>
-
-  {% if related_groups %}
-  <aside class="detail-related">
-    {% for group in related_groups if group['items'] %}
+    {% for group in visible_related_groups %}
     <section class="panel detail-panel related-panel">
       <div class="panel-header"><h2>{{ group.title }}</h2></div>
       <ul class="related-list">

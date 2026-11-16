@@ -11,14 +11,13 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=9">
-  <link rel="stylesheet" href="{{ url_for('static', filename='polish.css') }}?v=21">
+  <link rel="stylesheet" href="{{ url_for('static', filename='polish.css') }}?v=28">
 </head>
 <body data-offline-scope="{{ current_user.uid if current_user else 'preview' }}">
   <div class="app-shell">
     <aside class="sidebar" id="sidebar">
       <a class="brand" href="{{ url_for('dashboard') }}">
-        <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-listing"></use></svg></span>
-        <span class="brand-copy"><strong>ramp</strong><small>SUPER ADMIN</small></span>
+        <img class="brand-logo" src="{{ url_for('static', filename='ramp_admin_logo.png') }}" alt="RAMP Admin">
       </a>
       <nav class="navigation" aria-label="Main navigation">
         {% set group = namespace(current='') %}

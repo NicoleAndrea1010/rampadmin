@@ -129,8 +129,11 @@ class RampAdminWebTests(unittest.TestCase):
             response = self.client.get("/login")
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn(b"/static/ramp_admin_logo.png", response.data)
         self.assertIn(b"#icon-building", response.data)
         self.assertIn(b"#icon-eye-off", response.data)
+        self.assertIn(b"RENTAL ADMINISTRATION", response.data)
+        self.assertIn(b"Maintenance Platform", response.data)
         self.assertIn(b'class="button button-primary login-submit"', response.data)
 
     def test_rpc_helper_uses_authenticated_supabase_rest_endpoint(self):
@@ -1358,7 +1361,12 @@ class RampAdminWebTests(unittest.TestCase):
                 "_fetch_supabase_record",
                 side_effect=[
                     {"id": inquiry_id, "status": "pending"},
-                    {"id": unit_id, "is_archived": False},
+                    {
+                        "id": unit_id,
+                        "is_archived": False,
+                        "status": "Vacant",
+                        "tenant_id": None,
+                    },
                 ],
             ),
             patch.object(ramp_app.supabase_backend, "rpc_request") as review_rpc,
@@ -1384,6 +1392,202 @@ class RampAdminWebTests(unittest.TestCase):
                 "p_internal_note": "Reviewed by admin",
             },
         )
+
+    def test_inquiry_review_requires_a_valid_uuid_and_renders_a_helpful_error(self):
+        config, auth = self.set_live_session()
+        with (
+            patch.object(ramp_app.supabase_backend, "settings", return_value=config),
+            patch.object(
+                ramp_app.supabase_backend, "load_session", return_value=(auth, "live-csrf")
+            ),
+            patch.object(ramp_app, "_fetch_supabase_record") as fetch_record,
+        ):
+            response = self.client.post(
+                "/inquiries/not-a-uuid/review",
+                data={"csrf_token": "live-csrf", "decision": "approve"},
+            )
+        self.assertEqual(response.status_code, 404)
+        self.assertIn(b'class="panel error-card"', response.data)
+        self.assertIn(b"Page not found", response.data)
+        fetch_record.assert_not_called()
+
+    def test_inquiry_review_method_error_uses_styled_page_and_keeps_allow_header(self):
+        config, auth = self.set_live_session()
+        inquiry_id = str(uuid4())
+        with (
+            patch.object(ramp_app.supabase_backend, "settings", return_value=config),
+            patch.object(
+                ramp_app.supabase_backend, "load_session", return_value=(auth, "live-csrf")
+            ),
+        ):
+            response = self.client.get(f"/inquiries/{inquiry_id}/review")
+        self.assertEqual(response.status_code, 405)
+        self.assertIn("POST", response.headers["Allow"])
+        self.assertIn(b'class="panel error-card"', response.data)
+        self.assertIn(b"Request could not be completed", response.data)
+
+    def test_inquiry_review_missing_decision_returns_to_review_page(self):
+        config, auth = self.set_live_session()
+        inquiry_id = str(uuid4())
+        with (
+            patch.object(ramp_app.supabase_backend, "settings", return_value=config),
+            patch.object(
+                ramp_app.supabase_backend, "load_session", return_value=(auth, "live-csrf")
+            ),
+            patch.object(
+                ramp_app,
+                "_fetch_supabase_record",
+                return_value={"id": inquiry_id, "status": "pending"},
+            ),
+            patch.object(ramp_app, "fetch_supabase_table", return_value=[]),
+            patch.object(ramp_app.supabase_backend, "rpc_request") as review_rpc,
+        ):
+            response = self.client.post(
+                f"/inquiries/{inquiry_id}/review",
+                data={"csrf_token": "live-csrf"},
+                follow_redirects=True,
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Choose Approve or Decline", response.data)
+        self.assertIn(b"Review inquiry", response.data)
+        review_rpc.assert_not_called()
+
+    def test_inquiry_review_preserves_optional_unit_assignment(self):
+        config, auth = self.set_live_session()
+        inquiry_id = str(uuid4())
+        with (
+            patch.object(ramp_app.supabase_backend, "settings", return_value=config),
+            patch.object(
+                ramp_app.supabase_backend, "load_session", return_value=(auth, "live-csrf")
+            ),
+            patch.object(
+                ramp_app,
+                "_fetch_supabase_record",
+                return_value={"id": inquiry_id, "status": "pending"},
+            ),
+            patch.object(ramp_app.supabase_backend, "rpc_request") as review_rpc,
+        ):
+            response = self.client.post(
+                f"/inquiries/{inquiry_id}/review",
+                data={"csrf_token": "live-csrf", "decision": "approve"},
+            )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            review_rpc.call_args.args[3]["p_assigned_unit_id"],
+            None,
+        )
+
+    def test_inquiry_review_only_lists_vacant_unassigned_units(self):
+        config, auth = self.set_live_session()
+        inquiry_id = str(uuid4())
+        units = [
+            {
+                "id": str(uuid4()),
+                "unit_number": "A-101",
+                "status": "Vacant",
+                "is_archived": False,
+                "tenant_id": None,
+            },
+            {
+                "id": str(uuid4()),
+                "unit_number": "A-102",
+                "status": "Occupied",
+                "is_archived": False,
+                "tenant_id": str(uuid4()),
+            },
+            {
+                "id": str(uuid4()),
+                "unit_number": "A-103",
+                "status": "Vacant",
+                "is_archived": True,
+                "tenant_id": None,
+            },
+            {
+                "id": str(uuid4()),
+                "unit_number": "A-104",
+                "status": "Vacant",
+                "is_archived": False,
+                "tenant_id": str(uuid4()),
+            },
+        ]
+        with (
+            patch.object(ramp_app.supabase_backend, "settings", return_value=config),
+            patch.object(
+                ramp_app.supabase_backend, "load_session", return_value=(auth, "live-csrf")
+            ),
+            patch.object(
+                ramp_app,
+                "_fetch_supabase_record",
+                return_value={"id": inquiry_id, "status": "pending"},
+            ),
+            patch.object(ramp_app, "fetch_supabase_table", return_value=units),
+        ):
+            response = self.client.get(f"/inquiries/{inquiry_id}")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"class=\"detail-layout inquiry-detail-layout\"", response.data)
+        self.assertIn(b"class=\"detail-related inquiry-review-column\"", response.data)
+        self.assertIn(b"A-101", response.data)
+        self.assertNotIn(b"A-102", response.data)
+        self.assertNotIn(b"A-103", response.data)
+        self.assertNotIn(b"A-104", response.data)
+        self.assertIn(b"Only vacant, non-archived units", response.data)
+
+    def test_inquiry_review_rejects_a_unit_that_is_no_longer_available(self):
+        config, auth = self.set_live_session()
+        inquiry_id = str(uuid4())
+        unit_id = str(uuid4())
+        inquiry = {"id": inquiry_id, "status": "pending"}
+        occupied_unit = {
+            "id": unit_id,
+            "is_archived": False,
+            "status": "Occupied",
+            "tenant_id": str(uuid4()),
+        }
+        with (
+            patch.object(ramp_app.supabase_backend, "settings", return_value=config),
+            patch.object(
+                ramp_app.supabase_backend, "load_session", return_value=(auth, "live-csrf")
+            ),
+            patch.object(
+                ramp_app,
+                "_fetch_supabase_record",
+                side_effect=[inquiry, occupied_unit, inquiry],
+            ),
+            patch.object(ramp_app, "fetch_supabase_table", return_value=[]),
+            patch.object(ramp_app.supabase_backend, "rpc_request") as review_rpc,
+        ):
+            response = self.client.post(
+                f"/inquiries/{inquiry_id}/review",
+                data={
+                    "csrf_token": "live-csrf",
+                    "decision": "approve",
+                    "assigned_unit_id": unit_id,
+                },
+                follow_redirects=True,
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"That unit is no longer available", response.data)
+        review_rpc.assert_not_called()
+
+    def test_inquiry_internal_note_is_rendered_as_text(self):
+        config, auth = self.set_live_session()
+        inquiry_id = str(uuid4())
+        inquiry = {
+            "id": inquiry_id,
+            "status": "declined",
+            "internal_note": "<script>alert(1)</script>",
+        }
+        with (
+            patch.object(ramp_app.supabase_backend, "settings", return_value=config),
+            patch.object(
+                ramp_app.supabase_backend, "load_session", return_value=(auth, "live-csrf")
+            ),
+            patch.object(ramp_app, "_fetch_supabase_record", return_value=inquiry),
+        ):
+            response = self.client.get(f"/inquiries/{inquiry_id}")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b"<script>alert(1)</script>", response.data)
+        self.assertIn(b"&lt;script&gt;alert(1)&lt;/script&gt;", response.data)
 
     def test_stale_property_edit_is_rejected_without_writing(self):
         config, auth = self.set_live_session()

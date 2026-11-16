@@ -1623,6 +1623,14 @@ def _display_status(value: Any) -> str:
     return text[:1].upper() + text[1:]
 
 
+def _is_available_review_unit(unit: dict[str, Any]) -> bool:
+    return (
+        unit.get("is_archived") is not True
+        and str(unit.get("status") or "").strip().casefold() == "vacant"
+        and not str(unit.get("tenant_id") or "").strip()
+    )
+
+
 def _fetch_supabase_record(
     table: str, record_id: str, fields: str, *, role: str | None = None
 ) -> dict[str, Any] | None:
@@ -2268,7 +2276,7 @@ def record_detail(section: str, record_id: str):
         if str(record.get("status") or "").casefold() == "pending" and not getattr(g, "preview_mode", True):
             review_units = [
                 unit for unit in fetch_supabase_table("units")
-                if unit.get("is_archived") is not True
+                if _is_available_review_unit(unit)
             ]
     elif section == "expenses":
         if record.get("unit_id"):
@@ -2509,6 +2517,10 @@ def settings_form(record_id: str):
 
 @app.post("/inquiries/<record_id>/review")
 def review_inquiry(record_id: str):
+    try:
+        record_id = str(UUID(record_id))
+    except ValueError:
+        abort(404)
     if getattr(g, "supabase_config", None) is None:
         abort(503, description="Inquiry review requires a live Supabase connection.")
     inquiry = _fetch_supabase_record(
@@ -2520,17 +2532,34 @@ def review_inquiry(record_id: str):
         abort(409, description="Only pending inquiries can be reviewed.")
     decision = request.form.get("decision", "").strip()
     if decision not in {"approve", "decline"}:
-        abort(400, description="Choose approve or decline.")
+        flash("Choose Approve or Decline before submitting the review.", "error")
+        return redirect(
+            url_for("record_detail", section="inquiries", record_id=record_id)
+        )
     assigned_unit_id = request.form.get("assigned_unit_id", "").strip() or None
     internal_note = request.form.get("internal_note", "").strip()
     if len(internal_note) > 2000:
         abort(400, description="The internal note must be 2,000 characters or fewer.")
     if assigned_unit_id:
+        try:
+            assigned_unit_id = str(UUID(assigned_unit_id))
+        except ValueError:
+            flash("Choose an available unit from the list.", "error")
+            return redirect(
+                url_for("record_detail", section="inquiries", record_id=record_id)
+            )
         assigned_unit = _fetch_supabase_record(
-            "units", assigned_unit_id, "id,is_archived,unit_number,name,title"
+            "units", assigned_unit_id,
+            "id,is_archived,status,tenant_id,unit_number,name,title",
         )
-        if assigned_unit is None or assigned_unit.get("is_archived") is True:
-            abort(400, description="Choose an existing, non-archived unit.")
+        if assigned_unit is None or not _is_available_review_unit(assigned_unit):
+            flash(
+                "That unit is no longer available. Choose a vacant unit and try again.",
+                "error",
+            )
+            return redirect(
+                url_for("record_detail", section="inquiries", record_id=record_id)
+            )
     supabase_backend.rpc_request(
         g.supabase_config,
         g.authenticated["access_token"],
@@ -3490,10 +3519,19 @@ def handle_supabase_error(error: supabase_backend.SupabaseRequestError):
     if request.headers.get("X-Ramp-Form-Request") == "1":
         status = error.status if 400 <= error.status < 600 else 502
         return jsonify({"error": message}), status
+    title = (
+        "Connection problem"
+        if error.status >= 500 or error.status == 429
+        else "Request could not be completed"
+    )
     return (
         render_template(
             "backend_error.html",
+            title=title,
+            eyebrow="SUPABASE RESPONSE",
             message=message,
+            back_url=url_for("dashboard"),
+            back_label="Back to dashboard",
         ),
         error.status if 400 <= error.status < 600 else 502,
     )
@@ -3505,7 +3543,41 @@ def handle_form_http_error(error: HTTPException):
         response = jsonify({"error": error.description})
         response.status_code = error.code or 400
     else:
+        status = error.code or 400
+        titles = {
+            400: "Request needs attention",
+            403: "Access denied",
+            404: "Page not found",
+            409: "Record changed",
+            429: "Please wait before retrying",
+        }
+        message = error.description
+        if status == 404 and message == "Not Found":
+            message = "The page or record may have moved or no longer exists."
+        back_url = url_for("dashboard")
+        back_label = "Back to dashboard"
+        if request.endpoint == "review_inquiry":
+            record_id = (request.view_args or {}).get("record_id", "")
+            try:
+                record_id = str(UUID(record_id))
+            except ValueError:
+                pass
+            else:
+                back_url = url_for(
+                    "record_detail", section="inquiries", record_id=record_id
+                )
+                back_label = "Back to inquiry"
         response = error.get_response()
+        response.set_data(
+            render_template(
+                "backend_error.html",
+                title=titles.get(status, "Request could not be completed"),
+                eyebrow="REQUEST ERROR",
+                message=message,
+                back_url=back_url,
+                back_label=back_label,
+            )
+        )
     retry_after = getattr(g, "auth_rate_limit_retry_after", None)
     if retry_after:
         response.headers["Retry-After"] = str(retry_after)
@@ -3555,7 +3627,14 @@ def service_worker():
 def handle_supabase_config_error(error: supabase_backend.SupabaseConfigurationError):
     app.logger.error("Supabase configuration error: %s", error)
     return (
-        render_template("backend_error.html", message=str(error)),
+        render_template(
+            "backend_error.html",
+            title="Connection problem",
+            eyebrow="BACKEND CONNECTION",
+            message=str(error),
+            back_url=url_for("dashboard"),
+            back_label="Back to dashboard",
+        ),
         503,
     )
 
@@ -3572,7 +3651,11 @@ def handle_service_unavailable(error):
     return (
         render_template(
             "backend_error.html",
+            title="Service unavailable",
+            eyebrow="BACKEND CONNECTION",
             message=message,
+            back_url=url_for("dashboard"),
+            back_label="Back to dashboard",
         ),
         503,
     )

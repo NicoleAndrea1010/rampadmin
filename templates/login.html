@@ -11,23 +11,22 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=9">
-  <link rel="stylesheet" href="{{ url_for('static', filename='polish.css') }}?v=21">
+  <link rel="stylesheet" href="{{ url_for('static', filename='polish.css') }}?v=28">
 </head>
 <body class="login-page">
   <main class="login-layout">
     <section class="login-brand-panel">
       <a class="brand login-brand" href="{{ url_for('login') }}">
-        <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-listing"></use></svg></span>
-        <span class="brand-copy"><strong>ramp</strong><small>SUPER ADMIN</small></span>
+        <img class="brand-logo" src="{{ url_for('static', filename='ramp_admin_logo.png') }}" alt="RAMP Admin">
       </a>
-      <div class="login-brand-message"><span class="login-orbit"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-building"></use></svg></span><p>PROPERTY MANAGEMENT, MADE CLEAR.</p><h1>Your entire rental portfolio,<br>in one place.</h1><span>Operations, payments, and people—working together.</span></div>
-      <span class="login-brand-footer">RAMP ADMIN · SECURE WORKSPACE</span>
+      <div class="login-brand-message"><span class="login-orbit"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-building"></use></svg></span><p>RENTAL ADMINISTRATION</p><h1>Maintenance Platform</h1><span>Properties, tenants, payments, and maintenance in one RAMP workspace.</span></div>
+      <span class="login-brand-footer">RAMP ADMIN</span>
     </section>
     <section class="login-main">
       <div class="login-form-wrap">
         <p class="login-kicker">WELCOME BACK</p>
         <h2>Sign in to RAMP</h2>
-        <p class="login-subtitle">Use your approved super-admin account to continue.</p>
+        <p class="login-subtitle">Enter your email and password to access your account.</p>
         {% if supabase_connected %}<p class="login-connection"><span class="online-dot"></span> Supabase project configuration detected</p>{% endif %}
         {% with messages = get_flashed_messages(with_categories=true) %}
           {% if messages %}<div class="login-messages">{% for category, message in messages %}<div class="flash flash-{{ category }}">{{ message }}</div>{% endfor %}</div>{% endif %}
