@@ -13,6 +13,7 @@ import sqlite3
 import time
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Iterator
 from uuid import UUID, uuid4
@@ -54,9 +55,80 @@ RECORDS_PAGE_SIZE = 50
 
 
 def _valid_email_address(value: str) -> bool:
+    value = value.strip()
+    if len(value) > 254 or value.count("@") != 1 or any(char.isspace() for char in value):
+        return False
+    local, domain = value.rsplit("@", 1)
+    if (
+        not local
+        or len(local) > 64
+        or local.startswith(".")
+        or local.endswith(".")
+        or ".." in local
+        or re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+", local) is None
+    ):
+        return False
+    labels = domain.split(".")
     return (
-        len(value) <= 254
-        and re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value) is not None
+        len(labels) >= 2
+        and all(
+            len(label) <= 63
+            and re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?", label)
+            is not None
+            for label in labels[:-1]
+        )
+        and len(labels[-1]) >= 2
+        and re.fullmatch(
+            r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?",
+            labels[-1],
+        ) is not None
+        and any(char.isalpha() for char in labels[-1])
+    )
+
+
+_DISPOSABLE_EMAIL_DOMAINS = {
+    "10minutemail.com",
+    "mailinator.com",
+    "tempmail.com",
+}
+
+
+def _valid_contact_email(value: str) -> bool:
+    if not _valid_email_address(value):
+        return False
+    domain = value.strip().rsplit("@", 1)[1].casefold()
+    return not any(
+        domain == blocked or domain.endswith(f".{blocked}")
+        for blocked in _DISPOSABLE_EMAIL_DOMAINS
+    )
+
+
+def _normalize_ph_mobile(value: str) -> str | None:
+    normalized = re.sub(r"[\s().-]", "", value)
+    if not normalized:
+        return ""
+    if re.fullmatch(r"09\d{9}|\+639\d{9}", normalized) is None:
+        return None
+    subscriber = normalized[2:] if normalized.startswith("09") else normalized[4:]
+    if len(set(subscriber)) == 1 or subscriber in {
+        "012345678",
+        "123456789",
+        "987654321",
+        "876543210",
+    }:
+        return None
+    return normalized
+
+
+def _normalized_text(value: str, *, uppercase: bool = False) -> str:
+    normalized = " ".join(value.split())
+    return normalized.upper() if uppercase else normalized
+
+
+def _valid_person_name(value: str) -> bool:
+    return (
+        sum(char.isalpha() for char in value) >= 2
+        and all(char.isalpha() or char in " .'-" for char in value)
     )
 
 
@@ -403,7 +475,7 @@ DETAIL_FIELDS = {
         "id,landlord_id,month,amount,method,payment_method,date,payment_date,status,"
         "unit_id,reference_number,base_rent,water_bill,electric_bill,late_fee,"
         "other_charge,tenant_name,unit_number,tenant_id,tenancy_id,remarks,"
-        "decline_reason,transaction_type,ticket_id,created_at"
+        "decline_reason,transaction_type,ticket_id,proof_image_url,created_at"
     ),
     "maintenance": (
         "id,landlord_id,unit_id,unit_number,tenant_id,tenant_name,title,description,"
@@ -1021,6 +1093,9 @@ def rows_for(section: str) -> list[dict[str, Any]]:
 def filtered_rows(section: str) -> tuple[list[dict[str, Any]], str, str]:
     query = request.args.get("q", "").strip()
     status = request.args.get("status", "All").strip()
+    category = request.args.get("category", "").strip()
+    if len(category) > 80:
+        abort(400, description="Category filters must be 80 characters or fewer.")
     all_rows = rows_for(section)
     rows = all_rows
     if section == "expenses":
@@ -1038,6 +1113,11 @@ def filtered_rows(section: str) -> tuple[list[dict[str, Any]], str, str]:
                 row for row in rows
                 if str(row.get("date") or "").startswith(period)
             ]
+    if category:
+        rows = [
+            row for row in rows
+            if str(row.get("category") or "").casefold() == category.casefold()
+        ]
     if query:
         needle = query.casefold()
         rows = [
@@ -1628,6 +1708,25 @@ def _is_available_review_unit(unit: dict[str, Any]) -> bool:
     )
 
 
+def _is_private_payment_receipt(payment: dict[str, Any], payment_id: str) -> bool:
+    tenant_id = str(payment.get("tenant_id") or "").strip()
+    path = str(payment.get("proof_image_url") or "").strip()
+    if (
+        re.fullmatch(r"[A-Za-z0-9_-]{1,128}", tenant_id) is None
+        or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", payment_id) is None
+        or "\\" in path
+        or path.startswith("/")
+    ):
+        return False
+    parts = path.split("/")
+    return (
+        len(parts) >= 3
+        and parts[0] == tenant_id
+        and parts[1] == payment_id
+        and all(part not in {"", ".", ".."} for part in parts)
+    )
+
+
 def _fetch_supabase_record(
     table: str, record_id: str, fields: str, *, role: str | None = None
 ) -> dict[str, Any] | None:
@@ -2150,6 +2249,7 @@ def records_page(section: str):
     filtered, sort, direction = sorted_rows(section, filtered)
     all_rows = rows_for(section)
     period = request.args.get("period", "").strip() if section == "expenses" else ""
+    category = request.args.get("category", "").strip()
     expense_total = sum(_number(row.get("amount")) for row in filtered) if section == "expenses" else 0
     try:
         page_number = int(request.args.get("page", "1"))
@@ -2171,6 +2271,14 @@ def records_page(section: str):
     statuses = sorted(
         {str(row[status_key]) for row in all_rows if row.get(status_key)}
     )
+    categories = sorted(
+        {
+            str(row["category"])
+            for row in all_rows
+            if row.get("category") and section in {"expenses", "announcements"}
+        },
+        key=str.casefold,
+    )
     related_landlords = rows_for("landlords") if section in {"properties", "tenants"} else []
     related_properties = rows_for("properties") if section == "tenants" else []
     return render_template(
@@ -2183,6 +2291,8 @@ def records_page(section: str):
         sort=sort,
         direction=direction,
         statuses=statuses,
+        categories=categories,
+        category=category,
         filtered_total=len(filtered),
         page_number=page_number,
         page_count=page_count,
@@ -2198,6 +2308,76 @@ def records_page(section: str):
         period=period,
         expense_total=expense_total,
     )
+
+
+@app.get("/payments/<record_id>/receipt")
+def payment_receipt(record_id: str):
+    if g.supabase_config is None:
+        abort(503, description="Receipt access requires a live Supabase connection.")
+    if re.fullmatch(r"[A-Za-z0-9_-]{1,128}", record_id) is None:
+        abort(404)
+    payment = _fetch_supabase_record(
+        "payments", record_id, "id,tenant_id,proof_image_url"
+    )
+    if payment is None:
+        abort(404)
+    path = str(payment.get("proof_image_url") or "").strip()
+    if not _is_private_payment_receipt(payment, record_id):
+        abort(404)
+    signed_url = supabase_backend.create_signed_storage_url(
+        g.supabase_config,
+        g.authenticated["access_token"],
+        "tenant-payment-receipts",
+        path,
+        expires_in=300,
+    )
+    return redirect(signed_url, code=302)
+
+
+@app.post("/payments/<record_id>/review")
+def review_payment_receipt(record_id: str):
+    if g.supabase_config is None:
+        abort(503, description="Payment review requires a live Supabase connection.")
+    if re.fullmatch(r"[A-Za-z0-9_-]{1,128}", record_id) is None:
+        abort(404)
+    payment = _fetch_supabase_record(
+        "payments", record_id, "id,status,tenant_id,proof_image_url"
+    )
+    if payment is None:
+        abort(404)
+    if str(payment.get("status") or "").strip().casefold() not in {
+        "pending",
+        "overdue",
+        "pending review",
+    }:
+        abort(409, description="Only unreviewed payment receipts can be reviewed.")
+    if not str(payment.get("proof_image_url") or "").strip():
+        abort(409, description="This payment has no submitted receipt.")
+    decision = request.form.get("decision", "").strip()
+    if decision not in {"approve", "decline"}:
+        abort(400, description="Choose whether to approve or decline this receipt.")
+    decline_reason = _normalized_text(request.form.get("decline_reason", ""))
+    if len(decline_reason) > 500:
+        abort(400, description="The decline reason must be 500 characters or fewer.")
+    if decision == "decline" and not decline_reason:
+        abort(400, description="Provide a reason before declining the receipt.")
+    supabase_backend.rpc_request(
+        g.supabase_config,
+        g.authenticated["access_token"],
+        "review_tenant_payment_receipt",
+        {
+            "p_payment_id": record_id,
+            "p_decision": decision,
+            "p_decline_reason": decline_reason or None,
+        },
+    )
+    flash(
+        "Payment receipt approved; payment marked paid."
+        if decision == "approve"
+        else "Payment receipt declined.",
+        "success",
+    )
+    return redirect(url_for("record_detail", section="payments", record_id=record_id))
 
 
 @app.get("/settings/terms")
@@ -2550,6 +2730,19 @@ def record_detail(section: str, record_id: str):
         related_groups=related_groups,
         edit_url=edit_url,
         review_units=review_units,
+        payment_receipt_url=(
+            url_for("payment_receipt", record_id=record_id)
+            if section == "payments"
+            and _is_private_payment_receipt(record, record_id)
+            else None
+        ),
+        can_review_payment=(
+            section == "payments"
+            and str(record.get("status") or "").strip().casefold()
+            in {"pending", "overdue", "pending review"}
+            and _is_private_payment_receipt(record, record_id)
+            and not getattr(g, "preview_mode", True)
+        ),
         can_review=(
             section == "inquiries"
             and str(record.get("status") or "").casefold() == "pending"
@@ -2766,35 +2959,35 @@ def _safe_csv_cell(value: Any) -> Any:
 
 ENTITY_FORM_FIELDS = {
     "properties": [
-        {"key": "unit_number", "label": "Unit number", "required": True, "max_length": 100},
-        {"key": "name", "label": "Property name", "required": True, "max_length": 160},
+        {"key": "unit_number", "label": "Unit number", "required": True, "min_length": 2, "max_length": 100},
+        {"key": "name", "label": "Property name", "required": True, "min_length": 2, "max_length": 160},
         {"key": "location", "label": "Location", "max_length": 240},
         {"key": "landlord_id", "label": "Landlord", "kind": "select", "max_length": 80},
-        {"key": "monthly_rent", "label": "Monthly rent", "kind": "number", "min": "0", "help": "Enter the monthly amount in PHP."},
+        {"key": "monthly_rent", "label": "Monthly rent", "kind": "number", "min": "0.01", "step": "0.01", "help": "Enter the monthly amount in PHP, up to two decimal places."},
         {"key": "status", "label": "Status", "required": True, "kind": "select", "options": ["Occupied", "Vacant", "Reserved", "Inactive"]},
     ],
     "tenants": [
-        {"key": "name", "label": "Full name", "required": True, "max_length": 100},
+        {"key": "name", "label": "Full name", "required": True, "min_length": 2, "max_length": 100},
         {"key": "email", "label": "Email", "kind": "email", "max_length": 254},
-        {"key": "phone", "label": "Phone", "max_length": 40},
+        {"key": "phone", "label": "Phone", "kind": "tel", "max_length": 40},
         {"key": "unit_id", "label": "Property", "kind": "select", "max_length": 80},
         {"key": "landlord_id", "label": "Landlord", "kind": "select", "max_length": 80},
         {"key": "status", "label": "Status", "required": True, "kind": "select", "options": ["Active", "Former"]},
-        {"key": "monthly_rent", "label": "Monthly rent", "kind": "number", "min": "0", "help": "Enter the monthly amount in PHP."},
+        {"key": "monthly_rent", "label": "Monthly rent", "kind": "number", "min": "0.01", "step": "0.01", "help": "Enter the monthly amount in PHP, up to two decimal places."},
         {"key": "lease_start", "label": "Lease starts", "kind": "date", "min_date": "2025-01-01", "help": "Select a date on or after January 1, 2025."},
         {"key": "lease_end", "label": "Lease ends", "kind": "date", "min_date": "2025-01-01", "help": "Select a date on or after January 1, 2025."},
-        {"key": "balance", "label": "Balance", "kind": "number", "min": "0", "help": "Enter the outstanding balance in PHP."},
+        {"key": "balance", "label": "Balance", "kind": "number", "min": "0", "step": "0.01", "help": "Enter the outstanding balance in PHP, up to two decimal places."},
     ],
     "expenses": [
-        {"key": "title", "label": "Expense", "required": True, "max_length": 160},
-        {"key": "category", "label": "Category", "required": True, "max_length": 80},
-        {"key": "amount", "label": "Amount", "required": True, "kind": "number", "min": "0", "help": "Enter the expense amount in PHP."},
+        {"key": "title", "label": "Expense", "required": True, "min_length": 2, "max_length": 160},
+        {"key": "category", "label": "Category", "required": True, "min_length": 2, "max_length": 80},
+        {"key": "amount", "label": "Amount", "required": True, "kind": "number", "min": "0.01", "step": "0.01", "help": "Enter the expense amount in PHP, up to two decimal places."},
         {"key": "date", "label": "Date", "required": True, "kind": "date", "min_date": "2025-01-01", "help": "Select a date on or after January 1, 2025."},
         {"key": "unit_number", "label": "Unit number", "max_length": 100},
         {"key": "notes", "label": "Notes", "kind": "textarea", "max_length": 2000},
     ],
     "announcements": [
-        {"key": "title", "label": "Title", "required": True, "max_length": 160},
+        {"key": "title", "label": "Title", "required": True, "min_length": 2, "max_length": 160},
         {"key": "message", "label": "Message", "required": True, "kind": "textarea", "max_length": 5000},
         {"key": "category", "label": "Category", "max_length": 80},
         {"key": "is_important", "label": "Mark as important", "kind": "boolean"},
@@ -2823,11 +3016,21 @@ def _entity_form_values(section: str, record: dict[str, Any] | None = None) -> d
     values: dict[str, Any] = {}
     for field in ENTITY_FORM_FIELDS[section]:
         key = field["key"]
-        value = request.form.get(key, "").strip()
+        raw_value = request.form.get(key, "")
+        value = raw_value.strip()
+        if field.get("kind") == "textarea":
+            value = value
+        elif field.get("kind") not in {"number", "date", "email", "tel", "select", "boolean"}:
+            value = _normalized_text(
+                value,
+                uppercase=key in {"name", "unit_number", "location", "title", "category"},
+            )
         if field.get("required") and not value:
             abort(400, description=f"{field['label']} is required.")
         if len(value) > field.get("max_length", 500):
             abort(400, description=f"{field['label']} is too long.")
+        if value and len(value) < field.get("min_length", 0):
+            abort(400, description=f"{field['label']} is too short.")
         if (
             field.get("options")
             and value
@@ -2840,19 +3043,47 @@ def _entity_form_values(section: str, record: dict[str, Any] | None = None) -> d
                 abort(400, description=f"Choose a valid {field['label'].lower()} value.")
             values[key] = value == "true"
             continue
-        if key == "email" and value and not _valid_email_address(value):
-            abort(400, description="Enter a valid email address.")
+        if key == "email":
+            value = value.lower()
+            if value and not _valid_contact_email(value):
+                abort(400, description="Enter a valid, non-disposable email address.")
+            values[key] = value or None
+            continue
+        if field.get("kind") == "tel":
+            normalized_phone = _normalize_ph_mobile(value)
+            if normalized_phone is None:
+                abort(
+                    400,
+                    description="Enter a Philippine mobile number starting with 09 or +639.",
+                )
+            values[key] = normalized_phone or None
+            continue
+        if (
+            value
+            and field.get("kind") not in {"textarea", "select"}
+            and re.fullmatch(r"(.)\1{3,}", value, re.IGNORECASE)
+        ):
+            abort(400, description=f"Enter a valid {field['label'].lower()}.")
+        if section == "tenants" and key == "name" and value and not _valid_person_name(value):
+            abort(
+                400,
+                description="Name may contain letters, spaces, periods, hyphens, and apostrophes only.",
+            )
         if field.get("kind") == "number":
             if not value:
                 values[key] = None
                 continue
             try:
-                number = float(value)
-            except ValueError:
+                number = Decimal(value)
+            except InvalidOperation:
                 abort(400, description=f"Enter a valid {field['label'].lower()}.")
-            if not math.isfinite(number) or number < 0:
+            if not number.is_finite() or number < 0:
                 abort(400, description=f"{field['label']} cannot be negative.")
-            values[key] = int(number) if number.is_integer() else number
+            if number.as_tuple().exponent < -2:
+                abort(400, description=f"{field['label']} may have at most two decimal places.")
+            if number < Decimal(field.get("min", "0")):
+                abort(400, description=f"{field['label']} must be at least {field['min']}.")
+            values[key] = int(number) if number == number.to_integral_value() else float(number)
             continue
         if field.get("kind") == "date" and value:
             if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
@@ -3174,9 +3405,16 @@ def superadmin_form(account_id: str | None = None):
         if account is None:
             abort(404)
     if request.method == "POST":
-        name = request.form.get("display_name", "").strip()
-        if len(name) < 2 or len(name) > 100:
-            flash("Display name must contain 2 to 100 characters.", "error")
+        name = _normalized_text(
+            request.form.get("display_name", ""),
+            uppercase=True,
+        )
+        if (
+            len(name) < 2
+            or len(name) > 100
+            or not _valid_person_name(name)
+        ):
+            flash("Enter a valid display name (2 to 100 characters).", "error")
             return render_template(
                 "superadmin_form.html",
                 account=account,
@@ -3184,8 +3422,11 @@ def superadmin_form(account_id: str | None = None):
             ), 400
         if account is None:
             email = request.form.get("email", "").strip().lower()
-            if not _valid_email_address(email):
-                flash("Enter a valid email address up to 254 characters.", "error")
+            if not _valid_contact_email(email):
+                flash(
+                    "Enter a valid email address from a non-disposable domain.",
+                    "error",
+                )
                 return render_template(
                     "superadmin_form.html",
                     account=None,
@@ -3332,22 +3573,30 @@ def landlord_form(landlord_id: str | None = None):
         if str(landlord.get("status", "")).casefold() == "archived":
             abort(409, description="Archived landlord records are read-only.")
     if request.method == "POST":
-        name = request.form.get("name", "").strip()
-        company = request.form.get("company", "").strip()
+        name = _normalized_text(request.form.get("name", ""), uppercase=True)
+        company = _normalized_text(request.form.get("company", ""), uppercase=True)
         email = request.form.get("email", "").strip().lower()
-        phone = request.form.get("phone", "").strip()
+        phone_input = request.form.get("phone", "").strip()
+        phone = _normalize_ph_mobile(phone_input)
         if (
-            len(name) < 2 or len(name) > 100 or not company or len(company) > 120
-            or len(email) > 254 or len(phone) > 40
+            len(name) < 2 or len(name) > 100 or not _valid_person_name(name)
+            or len(company) < 2 or len(company) > 120
+            or len(email) > 254 or len(phone_input) > 40 or phone is None
         ):
-            flash("Enter a name (2 to 100 characters), company (up to 120), valid email, and phone (up to 40).", "error")
+            flash(
+                "Enter a valid name, company, email, and Philippine mobile number.",
+                "error",
+            )
             return render_template(
                 "landlord_form.html",
                 landlord=landlord,
                 form_values=dict(request.form),
             ), 400
-        if landlord is None and not _valid_email_address(email):
-            flash("Enter a valid email address.", "error")
+        if landlord is None and not _valid_contact_email(email):
+            flash(
+                "Enter a valid email address from a non-disposable domain.",
+                "error",
+            )
             return render_template(
                 "landlord_form.html",
                 landlord=landlord,
@@ -3400,7 +3649,7 @@ def landlord_form(landlord_id: str | None = None):
                         **({"updated_at": f"eq.{landlord.get('updated_at')}"} if landlord.get("updated_at") else {}),
                         "select": "id",
                     },
-                    body={"name": name, "company_name": company, "phone": phone},
+                    body={"name": name, "company_name": company, "phone": phone or ""},
                     prefer="return=representation",
                 )
                 if not result:
@@ -3414,13 +3663,13 @@ def landlord_form(landlord_id: str | None = None):
                         """INSERT INTO landlords
                            (name, company, email, phone, status, created_at)
                            VALUES (?, ?, ?, ?, 'Invited', ?)""",
-                        (name, company, email, phone, date.today().isoformat()),
+                        (name, company, email, phone or "", date.today().isoformat()),
                     )
                 else:
                     db.execute(
                         """UPDATE landlords SET name = ?, company = ?, phone = ?
                            WHERE id = ?""",
-                        (name, company, phone, landlord_id),
+                        (name, company, phone or "", landlord_id),
                     )
         except sqlite3.IntegrityError:
             flash("That email address is already assigned to a landlord.", "error")

@@ -91,6 +91,22 @@ class RampAdminWebTests(unittest.TestCase):
             with self.assertRaises(ramp_app.supabase_backend.SupabaseConfigurationError):
                 ramp_app.supabase_backend.settings()
 
+    def test_email_and_ph_mobile_validation_normalize_and_reject_dummy_values(self):
+        self.assertTrue(ramp_app._valid_contact_email("  Person+tag@Example.COM "))
+        self.assertFalse(ramp_app._valid_contact_email("person@example"))
+        self.assertFalse(ramp_app._valid_contact_email("person@mailinator.com"))
+        self.assertEqual(
+            ramp_app._normalize_ph_mobile(" 0917-123-4567 "),
+            "09171234567",
+        )
+        self.assertEqual(
+            ramp_app._normalize_ph_mobile("+63 (917) 123-4567"),
+            "+639171234567",
+        )
+        self.assertIsNone(ramp_app._normalize_ph_mobile("09999999999"))
+        self.assertIsNone(ramp_app._normalize_ph_mobile("09123456789"))
+        self.assertIsNone(ramp_app._normalize_ph_mobile("0917ABC4567"))
+
     def test_supabase_config_file_must_contain_a_json_object(self):
         config_path = Path(self.temp_dir.name) / "supabase.json"
         config_path.write_text("[]", encoding="utf-8")
@@ -306,22 +322,22 @@ class RampAdminWebTests(unittest.TestCase):
                 "name": "Amara Santos",
                 "company": "Santos Property Group and Residential Holdings",
                 "email": "amara@example.com",
-                "phone": "+63 900 000 0000",
+                "phone": "+63 917 123 4567",
             },
         )
         response = self.client.get("/landlords?q=Amara")
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Amara Santos", response.data)
+        self.assertIn(b"AMARA SANTOS", response.data)
         self.assertIn(b'data-label="Landlord"', response.data)
         self.assertIn(b'class="table-value truncate-cell"', response.data)
         self.assertIn(
-            b'title="Santos Property Group and Residential Holdings"', response.data
+            b'title="SANTOS PROPERTY GROUP AND RESIDENTIAL HOLDINGS"', response.data
         )
         self.assertNotIn(b"Daniel Reyes", response.data)
         self.assertIn(b'data-loading-label="Filtering', response.data)
         export = self.client.get("/landlords/export.csv?q=Amara")
         self.assertEqual(export.status_code, 200)
-        self.assertIn(b"Amara Santos", export.data)
+        self.assertIn(b"AMARA SANTOS", export.data)
         self.assertNotIn(b"Taylor Lee", export.data)
 
     def test_display_value_formats_dates_timestamps_and_months(self):
@@ -824,11 +840,80 @@ class RampAdminWebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         march = self.client.get("/expenses?period=2026-03")
         self.assertEqual(march.status_code, 200)
-        self.assertIn(b"Water pump repair", march.data)
+        self.assertIn(b"WATER PUMP REPAIR", march.data)
         self.assertIn(b"\xe2\x82\xb11,250.50", march.data)
         april = self.client.get("/expenses?period=2026-04")
         self.assertEqual(april.status_code, 200)
-        self.assertNotIn(b"Water pump repair", april.data)
+        self.assertNotIn(b"WATER PUMP REPAIR", april.data)
+
+    def test_expense_category_filter_applies_to_list_and_csv(self):
+        csrf = self.csrf_token()
+        for title, category in (
+            ("Water pump repair", "Maintenance"),
+            ("Internet bill", "Utilities"),
+        ):
+            response = self.client.post(
+                "/expenses/new",
+                data={
+                    "csrf_token": csrf,
+                    "record_id": str(uuid4()),
+                    "title": title,
+                    "category": category,
+                    "amount": "1250.50",
+                    "date": "2026-03-12",
+                },
+            )
+            self.assertEqual(response.status_code, 302)
+        filtered = self.client.get("/expenses?category=maintenance")
+        self.assertEqual(filtered.status_code, 200)
+        self.assertIn(b"WATER PUMP REPAIR", filtered.data)
+        self.assertNotIn(b"INTERNET BILL", filtered.data)
+        exported = self.client.get("/expenses/export.csv?category=maintenance")
+        self.assertEqual(exported.status_code, 200)
+        self.assertIn(b"WATER PUMP REPAIR", exported.data)
+        self.assertNotIn(b"INTERNET BILL", exported.data)
+
+    def test_entity_form_normalizes_text_and_validates_phone_and_money_precision(self):
+        csrf = self.csrf_token()
+        response = self.client.post(
+            "/tenants/new",
+            data={
+                "csrf_token": csrf,
+                "name": "  Maria   Dela Cruz ",
+                "email": " MARIA@Example.COM ",
+                "phone": "0917-123-4567",
+                "status": "Active",
+                "monthly_rent": "12000.00",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        tenant = ramp_app.rows_for("tenants")[0]
+        self.assertEqual(tenant["name"], "MARIA DELA CRUZ")
+        self.assertEqual(tenant["email"], "maria@example.com")
+        self.assertEqual(tenant["phone"], "09171234567")
+
+        invalid_phone = self.client.post(
+            "/tenants/new",
+            data={
+                "csrf_token": csrf,
+                "name": "Valid Tenant",
+                "status": "Active",
+                "phone": "09123456789",
+            },
+        )
+        self.assertEqual(invalid_phone.status_code, 400)
+        invalid_amount = self.client.post(
+            "/expenses/new",
+            data={
+                "csrf_token": csrf,
+                "record_id": str(uuid4()),
+                "title": "Water pump repair",
+                "category": "Maintenance",
+                "amount": "10.001",
+                "date": "2026-03-12",
+            },
+        )
+        self.assertEqual(invalid_amount.status_code, 400)
         self.assertEqual(self.client.get("/expenses?period=2026-13").status_code, 400)
         self.assertEqual(self.client.get("/expenses?period=2024-12").status_code, 400)
 
@@ -891,7 +976,7 @@ class RampAdminWebTests(unittest.TestCase):
         )
         listing = self.client.get("/announcements?status=Archived")
         self.assertEqual(listing.status_code, 200)
-        self.assertIn(b"Water service update", listing.data)
+        self.assertIn(b"WATER SERVICE UPDATE", listing.data)
         self.assertNotIn(b">Edit</a>", listing.data)
 
     def test_settings_update_only_changes_an_existing_record(self):
@@ -1079,7 +1164,7 @@ class RampAdminWebTests(unittest.TestCase):
         response = self.client.get("/search?q=Morgan")
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Search results", response.data)
-        self.assertIn(b"Morgan Rivera", response.data)
+        self.assertIn(b"MORGAN RIVERA", response.data)
         self.assertIn(b"Landlords", response.data)
         self.assertIn(b"View all", response.data)
 
@@ -1129,7 +1214,7 @@ class RampAdminWebTests(unittest.TestCase):
                 "name": "Jordan Lee",
                 "company": "Lee Living",
                 "email": "jordan@example.com",
-                "phone": "+63 900 000 0000",
+                "phone": "+63 917 123 4567",
                 "status": "Invited",
             },
         )
@@ -1158,7 +1243,7 @@ class RampAdminWebTests(unittest.TestCase):
         changed = next(
             item for item in ramp_app.rows_for("landlords") if item["id"] == landlord["id"]
         )
-        self.assertEqual(changed["company"], "Lee & Co.")
+        self.assertEqual(changed["company"], "LEE & CO.")
         self.assertEqual(changed["status"], "Archived")
 
     def test_active_landlord_can_be_archived_without_suspending_first(self):
@@ -1241,7 +1326,7 @@ class RampAdminWebTests(unittest.TestCase):
                 "csrf_token": csrf,
                 "name": "Taylor Lee",
                 "email": "taylor@example.com",
-                "phone": "+63 900 000 0000",
+                "phone": "+63 917 123 4567",
                 "unit_id": "",
                 "landlord_id": "",
                 "status": "Active",
@@ -1341,7 +1426,7 @@ class RampAdminWebTests(unittest.TestCase):
                 "name": "Amara Santos",
                 "company": "Santos Property Group",
                 "email": "amara@example.com",
-                "phone": "+63 900 000 0000",
+                "phone": "+63 917 123 4567",
             },
         )
         landlord = ramp_app.rows_for("landlords")[0]
@@ -1564,6 +1649,183 @@ class RampAdminWebTests(unittest.TestCase):
                 "p_internal_note": "Reviewed by admin",
             },
         )
+
+    def test_payment_receipt_review_uses_authenticated_rpc_with_reason(self):
+        config, auth = self.set_live_session()
+        payment_id = "pay_123"
+        payment = {
+            "id": payment_id,
+            "status": "Pending Review",
+            "tenant_id": "tenant_123",
+            "proof_image_url": "tenant_123/pay_123/receipt.webp",
+        }
+        with (
+            patch.object(ramp_app.supabase_backend, "settings", return_value=config),
+            patch.object(
+                ramp_app.supabase_backend, "load_session", return_value=(auth, "live-csrf")
+            ),
+            patch.object(ramp_app, "_fetch_supabase_record", return_value=payment),
+            patch.object(ramp_app.supabase_backend, "rpc_request") as review_rpc,
+        ):
+            response = self.client.post(
+                f"/payments/{payment_id}/review",
+                data={
+                    "csrf_token": "live-csrf",
+                    "decision": "decline",
+                    "decline_reason": "  Reference does not match  ",
+                },
+            )
+        self.assertEqual(response.status_code, 302)
+        review_rpc.assert_called_once_with(
+            config,
+            "admin-access-token",
+            "review_tenant_payment_receipt",
+            {
+                "p_payment_id": payment_id,
+                "p_decision": "decline",
+                "p_decline_reason": "Reference does not match",
+            },
+        )
+
+    def test_payment_receipt_review_requires_reason_and_unreviewed_state(self):
+        config, auth = self.set_live_session()
+        pending = {
+            "id": "pay_123",
+            "status": "Pending",
+            "tenant_id": "tenant_123",
+            "proof_image_url": "tenant_123/pay_123/receipt.webp",
+        }
+        with (
+            patch.object(ramp_app.supabase_backend, "settings", return_value=config),
+            patch.object(
+                ramp_app.supabase_backend, "load_session", return_value=(auth, "live-csrf")
+            ),
+            patch.object(ramp_app, "_fetch_supabase_record", return_value=pending),
+            patch.object(ramp_app.supabase_backend, "rpc_request") as review_rpc,
+        ):
+            missing_reason = self.client.post(
+                "/payments/pay_123/review",
+                data={
+                    "csrf_token": "live-csrf",
+                    "decision": "decline",
+                    "decline_reason": "  ",
+                },
+            )
+        self.assertEqual(missing_reason.status_code, 400)
+        review_rpc.assert_not_called()
+
+        with (
+            patch.object(ramp_app.supabase_backend, "settings", return_value=config),
+            patch.object(
+                ramp_app.supabase_backend, "load_session", return_value=(auth, "live-csrf")
+            ),
+            patch.object(
+                ramp_app,
+                "_fetch_supabase_record",
+                return_value={**pending, "status": "Paid"},
+            ),
+            patch.object(ramp_app.supabase_backend, "rpc_request") as review_rpc,
+        ):
+            already_reviewed = self.client.post(
+                "/payments/pay_123/review",
+                data={"csrf_token": "live-csrf", "decision": "approve"},
+            )
+        self.assertEqual(already_reviewed.status_code, 409)
+        review_rpc.assert_not_called()
+
+    def test_payment_receipt_route_returns_short_lived_signed_redirect(self):
+        config, auth = self.set_live_session()
+        payment = {
+            "id": "pay_123",
+            "tenant_id": "tenant_123",
+            "proof_image_url": "tenant_123/pay_123/receipt.webp",
+        }
+        with (
+            patch.object(ramp_app.supabase_backend, "settings", return_value=config),
+            patch.object(
+                ramp_app.supabase_backend, "load_session", return_value=(auth, "live-csrf")
+            ),
+            patch.object(ramp_app, "_fetch_supabase_record", return_value=payment),
+            patch.object(
+                ramp_app.supabase_backend,
+                "create_signed_storage_url",
+                return_value="https://example.supabase.co/storage/v1/object/sign/receipt?token=x",
+            ) as sign_url,
+        ):
+            response = self.client.get("/payments/pay_123/receipt")
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers["Location"],
+            "https://example.supabase.co/storage/v1/object/sign/receipt?token=x",
+        )
+        sign_url.assert_called_once_with(
+            config,
+            "admin-access-token",
+            "tenant-payment-receipts",
+            "tenant_123/pay_123/receipt.webp",
+            expires_in=300,
+        )
+
+    def test_signed_storage_url_rejects_unexpected_host_and_object_path(self):
+        config = ramp_app.supabase_backend.SupabaseSettings(
+            "https://example.supabase.co", "test-publishable-key"
+        )
+        with patch.object(
+            ramp_app.supabase_backend,
+            "_request",
+            return_value={"signedURL": "https://attacker.example/file"},
+        ):
+            with self.assertRaises(
+                ramp_app.supabase_backend.SupabaseRequestError
+            ):
+                ramp_app.supabase_backend.create_signed_storage_url(
+                    config,
+                    "admin-access-token",
+                    "tenant-payment-receipts",
+                    "tenant_123/pay_123/receipt.webp",
+                )
+        with self.assertRaises(ValueError):
+            ramp_app.supabase_backend.create_signed_storage_url(
+                config,
+                "admin-access-token",
+                "tenant-payment-receipts",
+                "tenant_123/pay_123/../private.webp",
+            )
+
+    def test_payment_receipt_route_rejects_unrelated_or_public_urls(self):
+        config, auth = self.set_live_session()
+        unsafe_paths = (
+            "https://example.com/receipt.webp",
+            "another_tenant/pay_123/receipt.webp",
+            "tenant_123/another_payment/receipt.webp",
+        )
+        for path in unsafe_paths:
+            with self.subTest(path=path):
+                with (
+                    patch.object(
+                        ramp_app.supabase_backend, "settings", return_value=config
+                    ),
+                    patch.object(
+                        ramp_app.supabase_backend,
+                        "load_session",
+                        return_value=(auth, "live-csrf"),
+                    ),
+                    patch.object(
+                        ramp_app,
+                        "_fetch_supabase_record",
+                        return_value={
+                            "id": "pay_123",
+                            "tenant_id": "tenant_123",
+                            "proof_image_url": path,
+                        },
+                    ),
+                    patch.object(
+                        ramp_app.supabase_backend, "create_signed_storage_url"
+                    ) as sign_url,
+                ):
+                    response = self.client.get("/payments/pay_123/receipt")
+                self.assertEqual(response.status_code, 404)
+                sign_url.assert_not_called()
 
     def test_inquiry_review_allows_approval_without_an_assigned_unit(self):
         config, auth = self.set_live_session()
@@ -1940,7 +2202,7 @@ class RampAdminWebTests(unittest.TestCase):
             "name": "Demo Landlord",
             "company_name": "Demo Properties",
             "email": "landlord@example.com",
-            "phone": "555-0100",
+            "phone": "09171234567",
             "status": "active",
             "updated_at": "2026-11-12T10:00:00Z",
         }
@@ -1963,7 +2225,7 @@ class RampAdminWebTests(unittest.TestCase):
                     "name": "Demo Landlord Updated",
                     "company": "Demo Properties",
                     "email": landlord["email"],
-                    "phone": "555-0101",
+                    "phone": "0917-123-4567",
                 },
                 headers={"X-Ramp-Form-Request": "1"},
             )
@@ -1971,8 +2233,8 @@ class RampAdminWebTests(unittest.TestCase):
         patch_call = request_api.call_args
         self.assertEqual(patch_call.args[2], "landlords")
         self.assertEqual(patch_call.kwargs["method"], "PATCH")
-        self.assertEqual(patch_call.kwargs["body"]["name"], "Demo Landlord Updated")
-        self.assertEqual(patch_call.kwargs["body"]["phone"], "555-0101")
+        self.assertEqual(patch_call.kwargs["body"]["name"], "DEMO LANDLORD UPDATED")
+        self.assertEqual(patch_call.kwargs["body"]["phone"], "09171234567")
 
     def test_live_landlord_edit_accepts_numeric_record_id(self):
         config, auth = self.set_live_session()
@@ -2101,7 +2363,7 @@ class RampAdminWebTests(unittest.TestCase):
             "invite-admin-account",
             {
                 "email": "jordan@example.com",
-                "display_name": "Jordan Lee",
+                "display_name": "JORDAN LEE",
                 "role": "super_admin",
             },
         )

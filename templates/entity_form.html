@@ -47,7 +47,7 @@
         {% elif field.kind == 'textarea' %}
           <textarea name="{{ field.key }}" {% if field.required %}required{% endif %} {% if field.max_length %}maxlength="{{ field.max_length }}"{% endif %} rows="4">{{ field_value }}</textarea>
         {% else %}
-          <input type="{{ field.kind or 'text' }}" name="{{ field.key }}" {% if field.required %}required{% endif %} {% if field.max_length %}maxlength="{{ field.max_length }}"{% endif %} {% if field.min is defined %}min="{{ field.min }}"{% elif field.min_date is defined and (not record or not record.get(field.key) or record.get(field.key)|string >= field.min_date) %}min="{{ field.min_date }}"{% endif %} {% if field.kind == 'number' %}step="any"{% endif %} value="{{ field_value }}">
+          <input type="{{ field.kind or 'text' }}" name="{{ field.key }}" {% if field.required %}required{% endif %} {% if field.min_length is defined %}minlength="{{ field.min_length }}"{% endif %} {% if field.max_length %}maxlength="{{ field.max_length }}"{% endif %} {% if field.min is defined %}min="{{ field.min }}"{% elif field.min_date is defined and (not record or not record.get(field.key) or record.get(field.key)|string >= field.min_date) %}min="{{ field.min_date }}"{% endif %} {% if field.kind == 'number' %}step="{{ field.step or '0.01' }}"{% endif %} {% if field.kind == 'tel' %}inputmode="tel" autocomplete="tel"{% endif %} {% if field.kind == 'email' %}autocapitalize="none" spellcheck="false" autocomplete="email"{% endif %} value="{{ field_value }}">
         {% endif %}
         {% if field.help %}<small class="form-help">{{ field.help }}</small>{% endif %}
       </label>

@@ -282,6 +282,12 @@ form[aria-busy="true"] { cursor: progress; }
 .related-list a, .related-list span { color: #315f9d; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; text-decoration: none; }
 .related-list a:hover { text-decoration: underline; }
 .related-list small { color: var(--text-muted); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.payment-receipt-panel > .panel-header { align-items: flex-start; }
+.payment-receipt-panel > .panel-header p { margin: 5px 0 0; color: var(--text-muted); font-size: 11px; }
+.payment-review-actions { padding: 0 18px; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+.payment-review-actions form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.payment-review-actions .form-field { min-width: min(320px, 100%); }
+.payment-review-actions textarea { min-height: 74px; }
 .records-pagination { padding: 14px 18px; display: flex; align-items: center; justify-content: flex-end; gap: 12px; border-top: 1px solid #eff2f6; color: var(--text-muted); font-size: 11px; }
 .records-pagination .button { min-height: 34px; }
 .pagination-disabled { opacity: .5; cursor: default; }

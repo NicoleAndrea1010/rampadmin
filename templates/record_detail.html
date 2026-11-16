@@ -24,6 +24,35 @@
     {% if section == 'documents' %}
     <section class="panel detail-panel"><p class="page-subtitle">File opening is disabled until a private Supabase Storage access path is verified. This page displays metadata only.</p></section>
     {% endif %}
+    {% if section == 'payments' and payment_receipt_url %}
+    <section class="panel detail-panel payment-receipt-panel">
+      <div class="panel-header">
+        <div>
+          <h2>Payment proof</h2>
+          <p>Private receipt image. The temporary link expires after five minutes.</p>
+        </div>
+        <a class="button button-secondary" href="{{ payment_receipt_url }}" target="_blank" rel="noopener">View receipt</a>
+      </div>
+      {% if can_review_payment %}
+      <div class="payment-review-actions">
+        <form method="post" action="{{ url_for('review_payment_receipt', record_id=record.id) }}" data-requires-online="true" data-confirm="Approve this receipt and mark the payment as paid?" data-loading-label="Approving…">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="decision" value="approve">
+          <button class="button button-primary" type="submit">Approve receipt</button>
+        </form>
+        <form method="post" action="{{ url_for('review_payment_receipt', record_id=record.id) }}" data-requires-online="true" data-confirm="Decline this payment receipt?" data-loading-label="Declining…">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="decision" value="decline">
+          <label class="form-field">
+            <span>Reason for declining</span>
+            <textarea name="decline_reason" maxlength="500" rows="3" required></textarea>
+          </label>
+          <button class="button button-secondary" type="submit">Decline receipt</button>
+        </form>
+      </div>
+      {% endif %}
+    </section>
+    {% endif %}
     {% for group in detail_groups %}
     <section class="panel detail-panel {% if group.title == 'Private details' %}private-detail-panel{% endif %}">
       <div class="panel-header"><h2>{{ group.title }}</h2></div>
@@ -66,7 +95,7 @@
           </label>
           <label class="form-field">
             <span>Internal note</span>
-            <textarea name="internal_note" maxlength="2000" rows="4" aria-describedby="inquiry-note-help">{{ record.internal_note or '' }}</textarea>
+            <textarea name="internal_note" maxlength="1000" rows="4" aria-describedby="inquiry-note-help">{{ record.internal_note or '' }}</textarea>
             <small class="form-help" id="inquiry-note-help">Do not include passwords, payment card details, or government ID numbers.</small>
           </label>
         </div>

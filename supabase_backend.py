@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -349,6 +349,56 @@ def rpc_request(
         token=token,
         body=arguments,
     )
+
+
+def create_signed_storage_url(
+    config: SupabaseSettings,
+    token: str,
+    bucket: str,
+    object_path: str,
+    *,
+    expires_in: int = 300,
+) -> str:
+    if bucket != "tenant-payment-receipts":
+        raise ValueError("Unsupported private storage bucket.")
+    if (
+        not isinstance(object_path, str)
+        or len(object_path) > 1024
+        or object_path.startswith("/")
+        or "\\" in object_path
+        or any(part in {"", ".", ".."} for part in object_path.split("/"))
+        or len(object_path.split("/")) < 3
+    ):
+        raise ValueError("Invalid private storage object path.")
+    if not 1 <= expires_in <= 3600:
+        raise ValueError("Signed URL expiry must be from 1 to 3600 seconds.")
+
+    encoded_path = quote(object_path, safe="/")
+    result = _request(
+        config,
+        f"/storage/v1/object/sign/{quote(bucket, safe='')}/{encoded_path}",
+        method="POST",
+        token=token,
+        body={"expiresIn": expires_in},
+    )
+    if not isinstance(result, dict) or not isinstance(result.get("signedURL"), str):
+        raise SupabaseRequestError(502, "invalid_response")
+    signed_url = result["signedURL"]
+    parsed = urlparse(signed_url)
+    if parsed.scheme:
+        configured_origin = urlparse(config.url)
+        if (
+            parsed.scheme != "https"
+            or parsed.netloc != configured_origin.netloc
+            or not parsed.path.startswith("/storage/v1/object/sign/")
+        ):
+            raise SupabaseRequestError(502, "invalid_response")
+        return signed_url
+    if signed_url.startswith("/object/sign/"):
+        signed_url = f"/storage/v1{signed_url}"
+    if not signed_url.startswith("/storage/v1/object/sign/"):
+        raise SupabaseRequestError(502, "invalid_response")
+    return f"{config.url}{signed_url}"
 
 
 def invoke_function(

@@ -19,7 +19,7 @@
     {% if section == 'expenses' %}<a class="button button-primary" href="{{ url_for('expense_form') }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-plus"></use></svg> Add expense</a>{% endif %}
     {% if section == 'announcements' %}<a class="button button-primary" href="{{ url_for('announcement_form') }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-plus"></use></svg> Add announcement</a>{% endif %}
     {% if section == 'superadmins' and not preview_mode %}<a class="button button-primary" href="{{ url_for('superadmin_form') }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-plus"></use></svg> Invite superadmin</a>{% endif %}
-    <a class="button button-secondary" href="{{ url_for('export_csv', section=section, q=query, status=status, period=period, sort=sort, direction=direction) }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-download"></use></svg> Export CSV</a>
+    <a class="button button-secondary" href="{{ url_for('export_csv', section=section, q=query, status=status, category=category, period=period, sort=sort, direction=direction) }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-download"></use></svg> Export CSV</a>
   </div>
 </div>
 
@@ -28,9 +28,10 @@
   {% if section == 'expenses' %}<div class="summary-label"><strong>{{ currency_precise(expense_total) }}</strong> expenses total{% if period %} · {{ period }}{% endif %}</div>{% endif %}
 </div>
 <section class="panel data-panel">
-  <form class="filter-toolbar" method="get" data-loading-label="Filtering…">
+  <form class="filter-toolbar" method="get" data-loading-label="Filtering…" data-debounce-search="true">
     <label class="table-search"><span aria-hidden="true"><svg class="icon"><use href="{{ url_for('static', filename='icons.svg') }}#icon-search"></use></svg></span><input type="search" name="q" value="{{ query }}" placeholder="Search {{ config.title|lower }}..." aria-label="Search {{ config.title|lower }}"></label>
     {% if section == 'expenses' %}<label class="filter-select"><span class="visually-hidden">Filter by month</span><input type="month" name="period" min="2025-01" value="{{ period }}" aria-label="Filter expenses by month"></label>{% endif %}
+    {% if section in ['expenses', 'announcements'] %}<label class="filter-select"><span class="visually-hidden">Filter by category</span><select name="category" aria-label="Filter by category"><option value="" {% if not category %}selected{% endif %}>All categories</option>{% if category and category not in categories %}<option value="{{ category }}" selected>{{ category }}</option>{% endif %}{% for item in categories %}<option value="{{ item }}" {% if category|lower == item|lower %}selected{% endif %}>{{ item }}</option>{% endfor %}</select><span class="select-arrow"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-chevron-down"></use></svg></span></label>{% endif %}
     {% if statuses or status != 'All' %}{% if section != 'landlords' %}<label class="filter-select"><span class="visually-hidden">Filter by {{ 'access result' if section == 'rfid-access' else 'status' }}</span><select name="status" onchange="this.form.submit()"><option value="All" {% if status == 'All' %}selected{% endif %}>{{ 'All results' if section == 'rfid-access' else 'All statuses' }}</option>{% if status != 'All' and status not in statuses %}<option value="{{ status }}" selected>{{ status }}</option>{% endif %}{% for item in statuses %}<option value="{{ item }}" {% if status == item %}selected{% endif %}>{{ item }}</option>{% endfor %}</select><span class="select-arrow"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-chevron-down"></use></svg></span></label>{% endif %}{% endif %}
     {% if section == 'landlords' %}
     <nav class="status-counts" aria-label="Landlord status">
@@ -40,7 +41,7 @@
     {% endif %}
     {% if sort %}<input type="hidden" name="sort" value="{{ sort }}"><input type="hidden" name="direction" value="{{ direction }}">{% endif %}
     {% if section != 'landlords' %}<button class="button button-secondary filter-button" type="submit">Filter</button>{% endif %}
-    {% if query or status != 'All' or period %}<a class="clear-filters" href="{{ url_for('records_page', section=section) }}">Clear filters</a>{% endif %}
+    {% if query or status != 'All' or period or category %}<a class="clear-filters" href="{{ url_for('records_page', section=section) }}">Clear filters</a>{% endif %}
     <span class="toolbar-spacer"></span><span class="row-count">Showing {{ page_start }}–{{ page_end }} of {{ filtered_total }}</span>
   </form>
   <div class="table-scroll">
@@ -51,7 +52,7 @@
             {% set active_sort = sort == key %}
             {% set next_direction = 'desc' if active_sort and direction == 'asc' else 'asc' %}
             <th scope="col" aria-sort="{{ 'ascending' if active_sort and direction == 'asc' else 'descending' if active_sort else 'none' }}"{% if key in ['rent', 'monthly_rent', 'amount', 'balance'] %} data-numeric="true"{% endif %}>
-              <a class="column-sort" href="{{ url_for('records_page', section=section, q=query, status=status, period=period, sort=key, direction=next_direction) }}">
+              <a class="column-sort" href="{{ url_for('records_page', section=section, q=query, status=status, category=category, period=period, sort=key, direction=next_direction) }}">
                 {{ label }}<svg class="icon sort-indicator" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-{{ 'sort-up' if active_sort and direction == 'asc' else 'sort-down' if active_sort else 'sort' }}"></use></svg>
               </a>
             </th>
@@ -187,7 +188,7 @@
               <strong>No matching {{ config.title|lower }}</strong>
               <small>Adjust search or filters.</small>
             {% endif %}
-            {% if query or status != 'All' or period %}
+            {% if query or status != 'All' or period or category %}
               <a class="button button-secondary empty-clear" href="{{ url_for('records_page', section=section) }}">Clear filters</a>
             {% endif %}
             </div>
@@ -200,13 +201,13 @@
   {% if page_count > 1 %}
   <nav class="records-pagination" aria-label="Records pages">
     {% if page_number > 1 %}
-    <a class="button button-secondary" href="{{ url_for('records_page', section=section, q=query, status=status, period=period, sort=sort, direction=direction, page=page_number - 1) }}">Previous</a>
+    <a class="button button-secondary" href="{{ url_for('records_page', section=section, q=query, status=status, category=category, period=period, sort=sort, direction=direction, page=page_number - 1) }}">Previous</a>
     {% else %}
     <span class="button button-secondary pagination-disabled" aria-disabled="true">Previous</span>
     {% endif %}
     <span>Page {{ page_number }} of {{ page_count }}</span>
     {% if page_number < page_count %}
-    <a class="button button-secondary" href="{{ url_for('records_page', section=section, q=query, status=status, period=period, sort=sort, direction=direction, page=page_number + 1) }}">Next</a>
+    <a class="button button-secondary" href="{{ url_for('records_page', section=section, q=query, status=status, category=category, period=period, sort=sort, direction=direction, page=page_number + 1) }}">Next</a>
     {% else %}
     <span class="button button-secondary pagination-disabled" aria-disabled="true">Next</span>
     {% endif %}

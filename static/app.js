@@ -291,8 +291,8 @@ function openRecordEditor(section, href, record = null) {
         input.min = "2025-01-01";
       }
       if (type === "number") {
-          input.min = "0";
-          input.step = "any";
+          input.min = key === "balance" ? "0" : "0.01";
+          input.step = "0.01";
       }
     }
     if (["unit_number", "name", "status"].includes(key) && section === "properties") input.required = true;
@@ -796,6 +796,10 @@ document.addEventListener("DOMContentLoaded", () => {
   document.addEventListener("submit", (event) => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement)) return;
+    if (form.getAttribute("aria-busy") === "true") {
+      event.preventDefault();
+      return;
+    }
     if (event.defaultPrevented) return;
     if (form.dataset.requiresOnline === "true" && !navigator.onLine) {
       event.preventDefault();
@@ -814,6 +818,10 @@ document.addEventListener("DOMContentLoaded", () => {
   document.addEventListener("submit", async (event) => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement)) return;
+    if (form.getAttribute("aria-busy") === "true") {
+      event.preventDefault();
+      return;
+    }
     if (form.action.endsWith("/logout")) return;
     if (form.dataset.offlineQueue !== "true") return;
     if (form.dataset.confirm && !window.confirm(form.dataset.confirm)) {
@@ -823,6 +831,17 @@ document.addEventListener("DOMContentLoaded", () => {
     event.preventDefault();
     await sendForm(form, scope, event.submitter);
   }, { capture: true });
+
+  document.querySelectorAll('form[data-debounce-search="true"] input[type="search"]').forEach((input) => {
+    let timer;
+    input.addEventListener("input", (event) => {
+      if (event.isComposing) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        input.form?.requestSubmit();
+      }, 350);
+    });
+  });
 
   document.addEventListener("click", (event) => {
     if (

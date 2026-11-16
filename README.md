@@ -33,8 +33,9 @@ Details use explicit field allowlists and the signed-in administrator's RLS
 session. Sensitive tenant health and emergency-contact information is separated
 from ordinary list views. Inquiry decisions use the existing
 `review_tenant_inquiry` RPC. Expense records can be created and edited, are
-attributed to the signed-in administrator, and support month filtering and
-totals. Announcements can be created, edited, and archived without hard
+attributed to the signed-in administrator, and support category and month
+filtering and totals. Category filters are also preserved in sorting,
+pagination, and CSV export. Announcements can be created, edited, and archived without hard
 deletion. Existing settings records can be updated, but the app does not create
 settings rows. Notifications, events, public listings, tenant-document
 metadata, utility-rate history, and RFID access history are read-only; audit
@@ -55,6 +56,15 @@ not selected or displayed. Door controls remain disabled until the deployed
 function contract and superadmin authorization can be verified. No Supabase
 schema changes are made by this web app.
 
+Tenant payment receipts use the private `tenant-payment-receipts` Storage bucket.
+The admin app requests a five-minute signed URL only after fetching the payment
+under the signed-in administrator's Supabase session. Receipt decisions are
+submitted to the `review_tenant_payment_receipt` RPC, which locks the payment,
+updates only a pending receipt, and writes a minimal audit event. Apply
+`supabase/migrations/20261117060000_review_tenant_payment_receipts.sql` to a
+reviewed staging project before enabling this workflow; it is not applied to
+Supabase automatically.
+
 Only use the Supabase project URL and **publishable** key. Never put a service-role/secret key in this app, hosting variables, or browser code. The Flask server sends the publishable key and the signed-in administrator's Supabase access token to Supabase; access/refresh tokens stay in SQLite on the server and are not exposed to browser JavaScript or the session cookie. The browser does not need the Supabase URL or API key. A publishable key is not a database password; RLS and the signed-in user's permissions remain essential.
 
 ## Offline behavior
@@ -72,10 +82,10 @@ offline.
 
 ## Terms, help, and guardrails
 
-The Settings area includes an internal Terms & Conditions draft for review. It is
-not legal advice, does not collect acceptance, and must be adapted and reviewed
-for the final web and mobile services before publication. A separate privacy
-notice and acceptance workflow are still required if the service needs them.
+The Settings area includes an internal Terms & Conditions draft for review; this
+admin-only site does not collect tenant lease acceptance. Tenant lease terms and
+acceptance belong in the tenant app, with its own owner-approved lease details
+and privacy notice.
 
 The question-mark help menu gives administrators a short guide to navigation,
 search, filters, editing, archiving, and offline sync. New and changed date
