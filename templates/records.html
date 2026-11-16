@@ -4,8 +4,12 @@
 {% block content %}
 <div class="page-heading">
   <div>
-    <h1>{{ config.title }}</h1>
-    <p class="page-subtitle">{{ config.description }}</p>
+    <div class="page-title-row">
+      <h1>{{ config.title }}</h1>
+      {% if section == 'public-listings' %}<span class="page-state-pill">Read-only</span>{% endif %}
+      {% if section == 'documents' %}<span class="page-state-pill restricted"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-lock"></use></svg> Restricted access</span>{% endif %}
+    </div>
+    {% if config.description %}<p class="page-subtitle">{{ config.description }}</p>{% endif %}
   </div>
   <div class="heading-actions">
     {% if section == 'settings' %}<a class="button button-secondary" href="{{ url_for('terms_draft') }}">Terms &amp; Conditions draft</a>{% endif %}
@@ -22,20 +26,20 @@
 <div class="table-summary">
   <div class="summary-label"><span class="summary-dot"></span><strong>{{ filtered_total }}</strong> {{ config.title|lower }} found</div>
   {% if section == 'expenses' %}<div class="summary-label"><strong>{{ currency_precise(expense_total) }}</strong> expenses total{% if period %} · {{ period }}{% endif %}</div>{% endif %}
-  {% if section == 'landlords' %}
-  <div class="status-counts">
-    <a class="count-chip {% if status == 'All' %}selected{% endif %}" href="{{ url_for('records_page', section=section, q=query) }}">All <strong>{{ rows_for_count }}</strong></a>
-    {% for item in statuses %}<a class="count-chip {% if status == item %}selected{% endif %}" href="{{ url_for('records_page', section=section, q=query, status=item) }}">{{ item }} <strong>{{ status_counts[item] }}</strong></a>{% endfor %}
-  </div>
-  {% endif %}
 </div>
 <section class="panel data-panel">
   <form class="filter-toolbar" method="get" data-loading-label="Filtering…">
     <label class="table-search"><span aria-hidden="true"><svg class="icon"><use href="{{ url_for('static', filename='icons.svg') }}#icon-search"></use></svg></span><input type="search" name="q" value="{{ query }}" placeholder="Search {{ config.title|lower }}..." aria-label="Search {{ config.title|lower }}"></label>
     {% if section == 'expenses' %}<label class="filter-select"><span class="visually-hidden">Filter by month</span><input type="month" name="period" min="2025-01" value="{{ period }}" aria-label="Filter expenses by month"></label>{% endif %}
-    {% if statuses or status != 'All' %}<label class="filter-select"><span class="visually-hidden">Filter by {{ 'access result' if section == 'rfid-access' else 'status' }}</span><select name="status" onchange="this.form.submit()"><option value="All" {% if status == 'All' %}selected{% endif %}>{{ 'All results' if section == 'rfid-access' else 'All statuses' }}</option>{% if status != 'All' and status not in statuses %}<option value="{{ status }}" selected>{{ status }}</option>{% endif %}{% for item in statuses %}<option value="{{ item }}" {% if status == item %}selected{% endif %}>{{ item }}</option>{% endfor %}</select><span class="select-arrow"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-chevron-down"></use></svg></span></label>{% endif %}
+    {% if statuses or status != 'All' %}{% if section != 'landlords' %}<label class="filter-select"><span class="visually-hidden">Filter by {{ 'access result' if section == 'rfid-access' else 'status' }}</span><select name="status" onchange="this.form.submit()"><option value="All" {% if status == 'All' %}selected{% endif %}>{{ 'All results' if section == 'rfid-access' else 'All statuses' }}</option>{% if status != 'All' and status not in statuses %}<option value="{{ status }}" selected>{{ status }}</option>{% endif %}{% for item in statuses %}<option value="{{ item }}" {% if status == item %}selected{% endif %}>{{ item }}</option>{% endfor %}</select><span class="select-arrow"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-chevron-down"></use></svg></span></label>{% endif %}{% endif %}
+    {% if section == 'landlords' %}
+    <nav class="status-counts" aria-label="Landlord status">
+      <a class="count-chip {% if status == 'All' %}selected{% endif %}" href="{{ url_for('records_page', section=section, q=query) }}">All <strong>{{ rows_for_count }}</strong></a>
+      {% for item in statuses %}<a class="count-chip {% if status == item %}selected{% endif %}" href="{{ url_for('records_page', section=section, q=query, status=item) }}">{{ item }} <strong>{{ status_counts[item] }}</strong></a>{% endfor %}
+    </nav>
+    {% endif %}
     {% if sort %}<input type="hidden" name="sort" value="{{ sort }}"><input type="hidden" name="direction" value="{{ direction }}">{% endif %}
-    <button class="button button-secondary filter-button" type="submit">Filter</button>
+    {% if section != 'landlords' %}<button class="button button-secondary filter-button" type="submit">Filter</button>{% endif %}
     {% if query or status != 'All' or period %}<a class="clear-filters" href="{{ url_for('records_page', section=section) }}">Clear filters</a>{% endif %}
     <span class="toolbar-spacer"></span><span class="row-count">Showing {{ page_start }}–{{ page_end }} of {{ filtered_total }}</span>
   </form>
@@ -52,7 +56,7 @@
               </a>
             </th>
           {% endfor %}
-          <th scope="col" class="actions-heading" aria-label="Record actions">Actions</th>
+          <th scope="col" class="actions-heading"><span class="visually-hidden">Record actions</span></th>
         </tr>
       </thead>
       <tbody>
@@ -79,8 +83,18 @@
                 </time>
               {% elif section == 'utility-history' and key in ['previous_rate', 'new_rate'] %}
                 <span class="amount-cell">{{ row[key]|utility_rate }}</span>
-              {% elif key in ['status', 'lease_status'] %}
+              {% elif key in ['status', 'lease_status', 'priority'] %}
                 <span class="status-pill status-{{ row[key]|lower|replace(' ', '-') }}"><span class="status-dot" aria-hidden="true"></span>{{ row[key] }}</span>
+              {% elif key == 'role' and section == 'superadmins' %}
+                <code class="role-pill">{{ row[key] }}</code>
+              {% elif key == 'importance' and section == 'announcements' %}
+                <span class="importance-indicator {{ 'is-important' if row[key] == 'Important' else '' }}"><span class="importance-dot" aria-hidden="true"></span>{{ row[key] }}</span>
+              {% elif key == 'category' %}
+                <span class="category-token">{{ row[key]|display_value(key) }}</span>
+              {% elif key == 'type' and section == 'notifications' %}
+                <span class="status-pill notification-type status-{{ row[key]|lower|replace(' ', '-') }}">{{ row[key]|display_value(key) }}</span>
+              {% elif key == 'timestamp' and section == 'notifications' %}
+                <time class="notification-time" datetime="{{ row[key] }}" title="{{ row[key] }}">{{ row[key] }}</time>
               {% elif key == 'name' and section == 'landlords' %}
                 <span class="person-cell"><span class="avatar avatar-{{ loop.index0 % 5 }}">{{ row.name[:1] }}{{ (row.name.split()[-1][:1] if row.name.split()|length > 1 else '') }}</span><span><strong>{{ row.name }}</strong><small>{{ row.email }}</small></span></span>
               {% elif key in ['name', 'display_name'] and section in ['tenants', 'superadmins'] %}
@@ -91,7 +105,14 @@
               {% elif key == 'must_change_password' %}
                 {{ 'Yes' if row.get(key) else 'No' }}
               {% elif key == 'message' %}
-                <span class="truncate-cell" title="{{ row[key] }}">{{ row[key]|display_value(key) }}</span>
+                {% if section == 'inquiries' and row.get('inquiry_is_application') %}
+                  <span class="inquiry-summary" title="Rental application">
+                    <span class="inquiry-kind">Rental app</span>
+                    {% if row.property and row.property != '—' %}<span class="inquiry-unit">{{ row.property }}</span>{% endif %}
+                  </span>
+                {% else %}
+                  <span class="truncate-cell" title="{{ row[key] }}">{{ row[key]|display_value(key) }}</span>
+                {% endif %}
               {% else %}
                 {% set value = row.get(key, '—') or '—' %}
                 <span class="table-value{% if value|string|length > 32 %} truncate-cell{% endif %}" title="{{ value }}">
@@ -102,11 +123,10 @@
           {% endfor %}
           <td class="row-actions" data-label="Actions">
             <div class="row-action-controls">
-            <a class="table-action-icon" href="{{ url_for('record_detail', section=section, record_id=row.id) }}" aria-label="View record" title="View record"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-eye"></use></svg></a>
-            {% if (section == 'landlords' and row.status|lower != 'archived') or (section == 'properties' and not row.get('is_archived')) or (section == 'tenants' and not row.get('is_archived')) or (section == 'superadmins' and not preview_mode) or section in ['expenses', 'settings'] or (section == 'announcements' and not row.get('is_archived')) %}
             <details class="row-action-menu">
               <summary class="row-action-trigger" aria-label="More actions" title="More actions"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-more"></use></svg></summary>
               <div class="row-action-menu-items">
+                <a class="row-menu-item" href="{{ url_for('record_detail', section=section, record_id=row.id) }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-eye"></use></svg> View</a>
                 {% if section == 'landlords' and row.status|lower != 'archived' %}
                   <a class="row-menu-item" data-offline-edit="landlords" data-record="{{ row|tojson|forceescape }}" href="{{ url_for('landlord_form', landlord_id=row.id) }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-pencil"></use></svg> Edit</a>
                 {% elif section == 'properties' and not row.get('is_archived') %}
@@ -140,37 +160,37 @@
                 {% endif %}
               </div>
             </details>
-            {% endif %}
             </div>
           </td>
         </tr>
       {% else %}
         <tr>
           <td class="empty-cell" colspan="{{ config.columns|length + 1 }}">
+            <div class="empty-state">
             <span class="empty-icon"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-search"></use></svg></span>
             {% if rows_for_count == 0 %}
               <strong>No {{ config.title|lower }} yet</strong>
-              <small>Records will appear here when they are first added.</small>
               {% if section == 'properties' %}
-                <a class="button button-primary empty-clear" href="{{ url_for('property_form') }}">Add first unit</a>
+                <a class="button button-secondary empty-clear" href="{{ url_for('property_form') }}">Add unit</a>
               {% elif section == 'landlords' %}
-                <a class="button button-primary empty-clear" href="{{ url_for('landlord_form') }}">Add first landlord</a>
+                <a class="button button-secondary empty-clear" href="{{ url_for('landlord_form') }}">Add landlord</a>
               {% elif section == 'tenants' %}
-                <a class="button button-primary empty-clear" href="{{ url_for('tenant_form') }}">Add first tenant</a>
+                <a class="button button-secondary empty-clear" href="{{ url_for('tenant_form') }}">Add tenant</a>
               {% elif section == 'expenses' %}
-                <a class="button button-primary empty-clear" href="{{ url_for('expense_form') }}">Add first expense</a>
+                <a class="button button-secondary empty-clear" href="{{ url_for('expense_form') }}">Add expense</a>
               {% elif section == 'announcements' %}
-                <a class="button button-primary empty-clear" href="{{ url_for('announcement_form') }}">Create first announcement</a>
+                <a class="button button-secondary empty-clear" href="{{ url_for('announcement_form') }}">Add announcement</a>
               {% elif section == 'superadmins' and not preview_mode %}
-                <a class="button button-primary empty-clear" href="{{ url_for('superadmin_form') }}">Invite first admin</a>
+                <a class="button button-secondary empty-clear" href="{{ url_for('superadmin_form') }}">Invite admin</a>
               {% endif %}
             {% else %}
               <strong>No matching {{ config.title|lower }}</strong>
-              <small>Try adjusting your search or filters.</small>
+              <small>Adjust search or filters.</small>
             {% endif %}
             {% if query or status != 'All' or period %}
               <a class="button button-secondary empty-clear" href="{{ url_for('records_page', section=section) }}">Clear filters</a>
             {% endif %}
+            </div>
           </td>
         </tr>
       {% endfor %}

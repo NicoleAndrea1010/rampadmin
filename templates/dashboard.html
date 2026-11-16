@@ -4,59 +4,53 @@
 {% block content %}
 <div class="page-heading dashboard-heading">
   <div>
-    <span class="dashboard-kicker" aria-hidden="true">Portfolio overview</span>
-    <h1>Overview</h1>
-    <p class="page-subtitle">A concise view of the portfolio and work that needs attention.</p>
+    <span class="dashboard-kicker" aria-hidden="true">Portfolio</span>
+    <h1>Dashboard</h1>
   </div>
   <a class="button button-primary" href="{{ url_for('landlord_form') }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-plus"></use></svg> Add landlord</a>
 </div>
 
 <div class="stats-grid dashboard-stats">
-  <a class="stat-card" href="{{ url_for('records_page', section='properties') }}">
+  <a class="stat-card stat-card-featured" href="{{ url_for('records_page', section='properties') }}">
     <span class="stat-top"><span class="stat-label">Active units</span><span class="stat-icon blue"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-building"></use></svg></span></span>
     <span class="stat-value">{{ stats.properties }}</span>
-    <span class="stat-foot">{{ stats.occupied_properties }} occupied · {{ stats.vacant_properties }} vacant · {{ stats.reserved_properties }} reserved</span>
   </a>
   <a class="stat-card" href="{{ url_for('records_page', section='inquiries', status='Pending') }}">
     <span class="stat-top"><span class="stat-label">Pending inquiries</span><span class="stat-icon violet"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-message"></use></svg></span></span>
     <span class="stat-value">{{ stats.pending_inquiries }}</span>
-    <span class="stat-foot">Open the review queue</span>
   </a>
   <a class="stat-card" href="{{ url_for('records_page', section='payments', status='Pending') }}">
-    <span class="stat-top"><span class="stat-label">Payments pending</span><span class="stat-icon mint"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-card"></use></svg></span></span>
+    <span class="stat-top"><span class="stat-label">Pending payments</span><span class="stat-icon mint"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-card"></use></svg></span></span>
     <span class="stat-value">{{ stats.pending_payments }}</span>
-    <span class="stat-foot">Based on stored payment status</span>
   </a>
   <a class="stat-card" href="{{ url_for('records_page', section='payments', status='Overdue') }}">
-    <span class="stat-top"><span class="stat-label">Payments marked overdue</span><span class="stat-icon amber"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-alert"></use></svg></span></span>
+    <span class="stat-top"><span class="stat-label">Marked overdue</span><span class="stat-icon amber"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-alert"></use></svg></span></span>
     <span class="stat-value">{{ stats.overdue_payments }}</span>
-    <span class="stat-foot">No overdue status is inferred</span>
   </a>
   <a class="stat-card" href="{{ url_for('records_page', section='maintenance') }}">
-    <span class="stat-top"><span class="stat-label">Maintenance not closed</span><span class="stat-icon blue"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-wrench"></use></svg></span></span>
+    <span class="stat-top"><span class="stat-label">Open maintenance</span><span class="stat-icon blue"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-wrench"></use></svg></span></span>
     <span class="stat-value">{{ stats.open_tickets }}</span>
-    <span class="stat-foot">{{ stats.high_priority_tickets }} high/urgent · {{ stats.maintenance_properties }} units flagged</span>
+    {% if stats.high_priority_tickets or stats.maintenance_properties %}
+    <span class="stat-foot">{% if stats.high_priority_tickets %}{{ stats.high_priority_tickets }} high priority{% endif %}{% if stats.high_priority_tickets and stats.maintenance_properties %} · {% endif %}{% if stats.maintenance_properties %}{{ stats.maintenance_properties }} unit{% if stats.maintenance_properties != 1 %}s{% endif %} flagged{% endif %}</span>
+    {% endif %}
   </a>
   <a class="stat-card" href="{{ url_for('records_page', section='tenants') }}">
-    <span class="stat-top"><span class="stat-label">Leases ending soon</span><span class="stat-icon violet"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-calendar"></use></svg></span></span>
+    <span class="stat-top"><span class="stat-label">Leases ending · 30 days</span><span class="stat-icon violet"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-calendar"></use></svg></span></span>
     <span class="stat-value">{{ stats.lease_ending_soon }}</span>
-    <span class="stat-foot">Active leases ending in the next 30 days</span>
   </a>
-  <a class="stat-card" href="{{ url_for('records_page', section='payments') }}">
-    <span class="stat-top"><span class="stat-label">Paid rent · {{ month_label }}</span><span class="stat-icon mint"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-banknote"></use></svg></span></span>
+  <a class="stat-card stat-card-featured" href="{{ url_for('records_page', section='payments') }}">
+    <span class="stat-top"><span class="stat-label">Rent collected · {{ month_label }}</span><span class="stat-icon mint"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-banknote"></use></svg></span></span>
     <span class="stat-value money">{{ currency(stats.collected) }}</span>
-    <span class="stat-foot">Paid rent transactions only</span>
   </a>
   <a class="stat-card" href="{{ url_for('records_page', section='landlords') }}">
     <span class="stat-top"><span class="stat-label">Active landlords</span><span class="stat-icon amber"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-users"></use></svg></span></span>
     <span class="stat-value">{{ stats.landlords }}</span>
-    <span class="stat-foot">Current account status</span>
   </a>
 </div>
 
 {% if unit_status_counts %}
 <section class="unit-status-strip" aria-label="Active unit counts by status">
-  <strong>Units by status</strong>
+  <strong>Unit status</strong>
   {% for unit_status, count in unit_status_counts|dictsort %}
   <a href="{{ url_for('records_page', section='properties', status=unit_status) }}">
     <span>{{ unit_status }}</span><b>{{ count }}</b>
@@ -66,7 +60,6 @@
 {% endif %}
 
 <div class="dashboard-period-note">
-  <span>Rent totals use the app’s existing payment-date fallback and count each paid rent row once.</span>
   <form method="get" class="period-filter">
     <label for="dashboardPeriod">Rent period</label>
     <input id="dashboardPeriod" type="month" name="period" min="2025-01" value="{{ selected_period }}">
@@ -82,19 +75,19 @@
       {% for item in attention_items %}
       <a class="attention-row" href="{{ url_for('records_page', section=item.section, status=item.status or 'All') }}">
         <strong>{{ item.title }}</strong>
-        <span class="attention-count">{{ item.count }} {{ item.unit }}{% if item.count != 1 %}s{% endif %}</span>
+        <span class="attention-count">{{ item.count }} {{ item.unit if item.count == 1 else item.unit_plural }}</span>
         <span class="attention-arrow" aria-hidden="true"><svg class="icon"><use href="{{ url_for('static', filename='icons.svg') }}#icon-arrow-right"></use></svg></span>
       </a>
       {% endfor %}
     </div>
     {% else %}
-    <p class="follow-up-empty">Nothing needs follow-up right now.</p>
+    <p class="follow-up-empty">All clear.</p>
     {% endif %}
   </section>
 
   <section class="panel activity-summary">
     <div class="panel-header">
-      <div><h2>Recent activity</h2><p>From existing audit, inquiry, payment, and maintenance records.</p></div>
+      <div><h2>Recent activity</h2></div>
       <a class="panel-link" href="{{ url_for('records_page', section='activity') }}">Audit history <svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-arrow-right"></use></svg></a>
     </div>
     {% if recent_activity %}
@@ -114,7 +107,7 @@
       {% endfor %}
     </div>
     {% else %}
-    <p class="follow-up-empty">No recent records with a usable date.</p>
+    <p class="follow-up-empty">No recent activity.</p>
     {% endif %}
   </section>
 </div>

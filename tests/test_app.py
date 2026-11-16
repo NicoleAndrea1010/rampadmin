@@ -172,18 +172,46 @@ class RampAdminWebTests(unittest.TestCase):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertIn(b">Local preview</strong>", response.data)
-        self.assertIn(b">Overview</h1>", response.data)
+        self.assertIn(b">Dashboard</h1>", response.data)
         self.assertIn(b"Follow up", response.data)
         self.assertIn(b"Recent activity", response.data)
         self.assertIn(b"Active units", response.data)
+        self.assertIn(b"Rent collected", response.data)
+        self.assertIn(b"All clear.", response.data)
+        self.assertNotIn(b"Based on stored payment status", response.data)
+        self.assertNotIn(b"No overdue status is inferred", response.data)
+        self.assertNotIn(b"Paid rent transactions only", response.data)
+        self.assertNotIn(b"Current account status", response.data)
+        self.assertNotIn(b"Nothing needs follow-up right now.", response.data)
         self.assertNotIn(b"Registered tenant accounts", response.data)
         self.assertNotIn(b"vs. last month", response.data)
         self.assertNotIn(b"Amara Santos", response.data)
         self.assertIn(b'id="pageLoading"', response.data)
-        self.assertIn(b"Quick guide", response.data)
+        self.assertIn(b"<h2>Help</h2>", response.data)
+        self.assertNotIn(b"Quick guide", response.data)
         self.assertIn(b"<details class=\"nav-group\"", response.data)
         self.assertIn(b'min="2025-01"', response.data)
         self.assertEqual(self.client.get("/?period=2024-12").status_code, 400)
+
+    def test_dashboard_attention_inquiry_count_uses_correct_plural(self):
+        with ramp_app.get_db() as db:
+            db.execute(
+                "INSERT INTO records (section, id, data) VALUES (?, ?, ?)",
+                ("inquiries", 1, ramp_app._json_dumps({"status": "Pending"})),
+            )
+
+        one = self.client.get("/")
+        self.assertIn(b">1 inquiry</span>", one.data)
+        self.assertNotIn(b"inquirys", one.data)
+
+        with ramp_app.get_db() as db:
+            db.execute(
+                "INSERT INTO records (section, id, data) VALUES (?, ?, ?)",
+                ("inquiries", 2, ramp_app._json_dumps({"status": "Pending"})),
+            )
+
+        two = self.client.get("/")
+        self.assertIn(b">2 inquiries</span>", two.data)
 
     def test_terms_draft_is_reachable_from_settings(self):
         settings = self.client.get("/settings")
@@ -370,7 +398,7 @@ class RampAdminWebTests(unittest.TestCase):
 
         self.assertEqual(empty_response.status_code, 200)
         self.assertIn(b"No units yet", empty_response.data)
-        self.assertIn(b'href="/properties/new">Add first unit</a>', empty_response.data)
+        self.assertIn(b'href="/properties/new">Add unit</a>', empty_response.data)
 
         record_id = str(uuid4())
         with ramp_app.get_db() as db:
@@ -424,7 +452,8 @@ class RampAdminWebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'<small>jamie@example.com</small>', response.data)
         self.assertIn(b'data-label="Email"', response.data)
-        self.assertIn(b'aria-label="View record"', response.data)
+        self.assertIn(b"> View</a>", response.data)
+        self.assertNotIn(b'aria-label="View record"', response.data)
         self.assertIn(b'class="row-action-menu"', response.data)
         self.assertIn(b'data-offline-edit="tenants"', response.data)
         self.assertIn(b'action="/tenants/' + record_id.encode() + b'/archive"', response.data)
@@ -435,6 +464,75 @@ class RampAdminWebTests(unittest.TestCase):
         descending = self.client.get("/tenants?sort=name&direction=desc")
         self.assertIn(b'href="/static/icons.svg#icon-sort-up"></use>', ascending.data)
         self.assertIn(b'href="/static/icons.svg#icon-sort-down"></use>', descending.data)
+
+    def test_inquiry_application_is_summarized_as_a_chip(self):
+        record_id = str(uuid4())
+        with ramp_app.get_db() as db:
+            db.execute(
+                "INSERT INTO records (section, id, data) VALUES (?, ?, ?)",
+                (
+                    "inquiries",
+                    record_id,
+                    ramp_app._json_dumps(
+                        {
+                            "id": record_id,
+                            "sender": "Pat Example",
+                            "email": "pat@example.com",
+                            "property": "W101",
+                            "message": "[RENTAL APPLICATION] Preferred Unit: W101. Additional details.",
+                            "status": "Pending",
+                        }
+                    ),
+                ),
+            )
+
+        response = self.client.get("/inquiries")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'class="inquiry-kind">Rental app</span>', response.data)
+        self.assertIn(b'class="inquiry-unit">W101</span>', response.data)
+        self.assertNotIn(b"Additional details.", response.data)
+
+    def test_notification_timestamp_stays_in_monospace_log_format(self):
+        timestamp = "2026-11-16T10:11:42+00:00"
+        with ramp_app.get_db() as db:
+            db.execute(
+                "INSERT INTO records (section, id, data) VALUES (?, ?, ?)",
+                (
+                    "notifications",
+                    "notification-preview",
+                    ramp_app._json_dumps(
+                        {
+                            "id": "notification-preview",
+                            "title": "Payment received",
+                            "type": "Payment",
+                            "status": "Unread",
+                            "timestamp": timestamp,
+                            "entity_type": "Payment",
+                            "action": "Review",
+                        }
+                    ),
+                ),
+            )
+
+        response = self.client.get("/notifications")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            f'<time class="notification-time" datetime="{timestamp}" title="{timestamp}">{timestamp}</time>'.encode(),
+            response.data,
+        )
+        self.assertNotIn(b'class="notification-time" data-local-time', response.data)
+
+    def test_public_and_document_pages_use_compact_access_badges(self):
+        listings = self.client.get("/public-listings")
+        documents = self.client.get("/documents")
+
+        self.assertEqual(listings.status_code, 200)
+        self.assertEqual(documents.status_code, 200)
+        self.assertIn(b'class="page-state-pill">Read-only</span>', listings.data)
+        self.assertIn(b'class="page-state-pill restricted"', documents.data)
+        self.assertNotIn(b"File opening is disabled", documents.data)
 
     def test_audit_rows_show_safe_business_summaries(self):
         row = ramp_app._normalize_audit_row(
@@ -536,7 +634,7 @@ class RampAdminWebTests(unittest.TestCase):
         self.assertEqual(dashboard.status_code, 200)
         self.assertIn(b"admin@example.com updated a record.", listing.data)
         self.assertIn(
-            b'<th scope="col" class="actions-heading" aria-label="Record actions">Actions</th>',
+            b'<th scope="col" class="actions-heading"><span class="visually-hidden">Record actions</span></th>',
             listing.data,
         )
         self.assertIn(b'aria-sort="descending"', listing.data)

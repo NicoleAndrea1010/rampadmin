@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=9">
-  <link rel="stylesheet" href="{{ url_for('static', filename='polish.css') }}?v=28">
+  <link rel="stylesheet" href="{{ url_for('static', filename='polish.css') }}?v=30">
 </head>
 <body data-offline-scope="{{ current_user.uid if current_user else 'preview' }}">
   <div class="app-shell">
@@ -67,15 +67,14 @@
           <input type="search" name="q" maxlength="120" placeholder="Search all records" aria-label="Search all records">
         </form>
         <details class="help-control">
-          <summary aria-label="How to use RAMP Admin" title="How to use RAMP Admin"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-help"></use></svg></summary>
+          <summary aria-label="Help" title="Help"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-help"></use></svg></summary>
           <section class="help-panel" aria-label="RAMP Admin guide">
-            <h2>Quick guide</h2>
+            <h2>Help</h2>
             <ul>
-              <li>Use the sidebar groups to open dashboards, people, portfolio, and operations pages.</li>
-              <li>Search globally from the top bar, or use a list's filters, column headings, and page controls.</li>
-              <li>Use View for record details and Edit for supported changes. Archive keeps history; records aren't hard-deleted here.</li>
-              <li>Offline edits are queued on this device and need a later sync. Avoid shared devices for sensitive records.</li>
-              <li>Open Settings for the terms draft and property defaults. The terms are not yet a consent or sign-up flow.</li>
+              <li>Search from the top bar. Filter or sort a list from its toolbar.</li>
+              <li>Open a record from its action menu. Archives keep history.</li>
+              <li>Offline edits sync when the connection returns.</li>
+              <li>Find the terms draft in Settings.</li>
             </ul>
           </section>
         </details>
@@ -84,8 +83,6 @@
       <section class="page-content">
         {% if preview_mode %}
         <div class="preview-notice"><span class="notice-symbol"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-info"></use></svg></span><span><strong>Local preview</strong> · Not connected to Supabase.</span></div>
-        {% else %}
-        <div class="preview-notice live-notice" id="connectionNotice"><span class="notice-symbol"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-check"></use></svg></span><span><strong>Live data</strong> · Connected to Supabase.</span></div>
         {% endif %}
         {% with messages = get_flashed_messages(with_categories=true) %}
           {% if messages %}

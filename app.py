@@ -85,7 +85,7 @@ app.config.update(
 SECTIONS: dict[str, dict[str, Any]] = {
     "landlords": {
         "title": "Landlords",
-        "description": "Review landlord profiles, account status, and contact details.",
+        "description": "Landlord profiles and access.",
         "table": "landlords",
         "columns": [
             ("name", "Landlord"),
@@ -98,21 +98,18 @@ SECTIONS: dict[str, dict[str, Any]] = {
     },
     "superadmins": {
         "title": "Superadmins",
-        "description": "Manage administrator access and approvals.",
+        "description": "Administrator accounts and access.",
         "table": "users",
         "columns": [
             ("display_name", "Name"),
             ("email", "Email"),
             ("role", "Role"),
             ("status", "Access"),
-            ("must_change_password", "Password reset"),
-            ("created_at", "Created"),
-            ("last_login_at", "Last login"),
         ],
     },
     "properties": {
         "title": "Units",
-        "description": "Review unit availability, rent, and occupancy.",
+        "description": "Availability, rent, and occupancy.",
         "table": "properties",
         "columns": [
             ("unit_number", "Unit"),
@@ -127,7 +124,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
     },
     "tenants": {
         "title": "Tenants",
-        "description": "Find tenants and review their current property and lease details.",
+        "description": "Tenant profiles and lease details.",
         "table": "tenants",
         "columns": [
             ("name", "Tenant"),
@@ -144,7 +141,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
     },
     "payments": {
         "title": "Payments",
-        "description": "Track rent received, outstanding balances, and payment status.",
+        "description": "Rent and payment status.",
         "table": "payments",
         "columns": [
             ("reference", "Reference"),
@@ -159,7 +156,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
     },
     "maintenance": {
         "title": "Maintenance",
-        "description": "Follow repair requests from first report through completion.",
+        "description": "Repair requests and status.",
         "table": "maintenance",
         "columns": [
             ("title", "Request"),
@@ -174,7 +171,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
     },
     "inquiries": {
         "title": "Tenant inquiries",
-        "description": "Keep track of prospective renters and property questions.",
+        "description": "Prospective tenants and property questions.",
         "table": "inquiries",
         "columns": [
             ("sender", "From"),
@@ -188,7 +185,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
     },
     "expenses": {
         "title": "Expenses",
-        "description": "Review operating expenses by period, category, and unit.",
+        "description": "Operating costs by period, category, and unit.",
         "table": "expenses",
         "columns": [
             ("title", "Expense"),
@@ -201,7 +198,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
     },
     "public-listings": {
         "title": "Public listings",
-        "description": "Read-only listing records. They are not assumed to sync with units.",
+        "description": "",
         "table": "public_listings",
         "columns": [
             ("title", "Listing"),
@@ -214,7 +211,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
     },
     "documents": {
         "title": "Tenant documents",
-        "description": "Review document metadata. File opening is disabled until private access is verified.",
+        "description": "",
         "table": "tenant_documents",
         "columns": [
             ("tenant", "Tenant"),
@@ -227,7 +224,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
     },
     "announcements": {
         "title": "Announcements",
-        "description": "Manage published messages and preserve archived announcements.",
+        "description": "Published and archived messages.",
         "table": "announcements",
         "columns": [
             ("title", "Announcement"),
@@ -240,7 +237,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
     },
     "notifications": {
         "title": "Notifications",
-        "description": "Review notification state and resolve referenced records when possible.",
+        "description": "",
         "table": "notifications",
         "columns": [
             ("title", "Notification"),
@@ -253,7 +250,7 @@ SECTIONS: dict[str, dict[str, Any]] = {
     },
     "events": {
         "title": "Events / calendar",
-        "description": "Review scheduled events and their completion state.",
+        "description": "",
         "table": "events",
         "columns": [
             ("title", "Event"),
@@ -1847,6 +1844,7 @@ def dashboard():
                 "count": len(open_tickets),
                 "title": "Open maintenance",
                 "unit": "request",
+                "unit_plural": "requests",
                 "section": "maintenance",
             }
         )
@@ -1854,8 +1852,9 @@ def dashboard():
         attention_items.append(
             {
                 "count": len(pending_inquiries),
-                "title": "Pending tenant inquiries",
+                "title": "Pending inquiries",
                 "unit": "inquiry",
+                "unit_plural": "inquiries",
                 "section": "inquiries",
                 "status": "Pending",
             }
@@ -1864,8 +1863,9 @@ def dashboard():
         attention_items.append(
             {
                 "count": len(overdue_payments),
-                "title": "Payments marked overdue",
+                "title": "Marked overdue",
                 "unit": "payment",
+                "unit_plural": "payments",
                 "section": "payments",
                 "status": "Overdue",
             }
@@ -1874,8 +1874,9 @@ def dashboard():
         attention_items.append(
             {
                 "count": len(lease_ending_soon),
-                "title": "Leases ending in 30 days",
+                "title": "Leases ending soon",
                 "unit": "lease",
+                "unit_plural": "leases",
                 "section": "tenants",
             }
         )
@@ -2012,6 +2013,11 @@ def records_page(section: str):
         abort(404, description="That page does not exist.")
     start_index = (page_number - 1) * RECORDS_PAGE_SIZE
     rows = filtered[start_index : start_index + RECORDS_PAGE_SIZE]
+    if section == "inquiries":
+        for row in rows:
+            row["inquiry_is_application"] = str(
+                row.get("message") or ""
+            ).lstrip().casefold().startswith("[rental application]")
     page_start = start_index + 1 if rows else 0
     page_end = start_index + len(rows)
     status_key = "access_status" if section == "rfid-access" else "status"
