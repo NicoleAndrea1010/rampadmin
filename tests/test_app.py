@@ -1565,6 +1565,72 @@ class RampAdminWebTests(unittest.TestCase):
             },
         )
 
+    def test_inquiry_review_allows_approval_without_an_assigned_unit(self):
+        config, auth = self.set_live_session()
+        inquiry_id = str(uuid4())
+        with (
+            patch.object(ramp_app.supabase_backend, "settings", return_value=config),
+            patch.object(
+                ramp_app.supabase_backend, "load_session", return_value=(auth, "live-csrf")
+            ),
+            patch.object(
+                ramp_app,
+                "_fetch_supabase_record",
+                return_value={"id": inquiry_id, "status": "pending"},
+            ),
+            patch.object(ramp_app.supabase_backend, "rpc_request") as review_rpc,
+        ):
+            response = self.client.post(
+                f"/inquiries/{inquiry_id}/review",
+                data={
+                    "csrf_token": "live-csrf",
+                    "decision": "approve",
+                    "assigned_unit_id": "",
+                    "internal_note": "",
+                },
+            )
+
+        self.assertEqual(response.status_code, 302)
+        review_rpc.assert_called_once_with(
+            config,
+            "admin-access-token",
+            "review_tenant_inquiry",
+            {
+                "p_inquiry_id": inquiry_id,
+                "p_decision": "approve",
+                "p_assigned_unit_id": None,
+                "p_internal_note": "",
+            },
+        )
+
+    def test_inquiry_review_rejects_notes_over_database_limit(self):
+        config, auth = self.set_live_session()
+        inquiry_id = str(uuid4())
+        with (
+            patch.object(ramp_app.supabase_backend, "settings", return_value=config),
+            patch.object(
+                ramp_app.supabase_backend, "load_session", return_value=(auth, "live-csrf")
+            ),
+            patch.object(
+                ramp_app,
+                "_fetch_supabase_record",
+                return_value={"id": inquiry_id, "status": "pending"},
+            ),
+            patch.object(ramp_app.supabase_backend, "rpc_request") as review_rpc,
+        ):
+            response = self.client.post(
+                f"/inquiries/{inquiry_id}/review",
+                data={
+                    "csrf_token": "live-csrf",
+                    "decision": "decline",
+                    "internal_note": "x" * 1001,
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"1,000 characters or fewer", response.data)
+        review_rpc.assert_not_called()
+
     def test_inquiry_review_requires_a_valid_uuid_and_renders_a_helpful_error(self):
         config, auth = self.set_live_session()
         with (

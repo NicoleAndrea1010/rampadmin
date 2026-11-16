@@ -11,7 +11,7 @@ production changes until the app owner has reviewed the proposed migration.
   - `p_inquiry_id` (UUID)
   - `p_decision` (`approve` or `decline`)
   - `p_assigned_unit_id` (UUID or `NULL`)
-  - `p_internal_note` (text, maximum 2,000 characters)
+  - `p_internal_note` (text, maximum 1,000 characters; matching the deployed table/RPC limit)
 - The related tables used by the app are `tenant_inquiries`, `units`, and
   `tenants`. The app reads inquiry fields including `status`, `assigned_unit_id`,
   `tenant_id`, and `internal_note`; unit fields include `status`, `is_archived`,

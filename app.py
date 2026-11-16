@@ -2691,8 +2691,8 @@ def review_inquiry(record_id: str):
         )
     assigned_unit_id = request.form.get("assigned_unit_id", "").strip() or None
     internal_note = request.form.get("internal_note", "").strip()
-    if len(internal_note) > 2000:
-        abort(400, description="The internal note must be 2,000 characters or fewer.")
+    if len(internal_note) > 1000:
+        abort(400, description="The internal note must be 1,000 characters or fewer.")
     if assigned_unit_id:
         try:
             assigned_unit_id = str(UUID(assigned_unit_id))
