@@ -329,7 +329,7 @@ NAV_ITEMS = [
     ("Operations", "Announcements", "megaphone", "announcements"),
     ("Operations", "Notifications", "bell", "notifications"),
     ("Operations", "Events / calendar", "calendar", "events"),
-    ("Building systems", "RFID access history", "radio", "rfid-access"),
+    ("System", "RFID access history", "shield", "rfid-access"),
     ("System", "Audit history", "history", "activity"),
     ("System", "Utility rate history", "chart", "utility-history"),
     ("System", "Settings", "settings", "settings"),
@@ -1037,15 +1037,7 @@ def format_display_value(value: Any, field_name: str = "") -> str:
     if not has_time:
         return date_label
     time_label = parsed.strftime("%I:%M %p").lstrip("0")
-    timezone_label = ""
-    if parsed.tzinfo is not None:
-        offset = parsed.strftime("%z")
-        timezone_label = (
-            " UTC" if offset == "+0000"
-            else f" UTC{offset[:3]}:{offset[3:]}" if offset
-            else ""
-        )
-    return f"{date_label} · {time_label}{timezone_label}"
+    return f"{date_label} · {time_label}"
 
 
 def format_structured_value(value: Any, field_name: str = "") -> str:

@@ -78,6 +78,10 @@ Sign-in and password-reset requests are limited to five attempts per email
 address per 15-minute window using the server SQLite database. This complements
 but does not replace hosting-provider and Supabase Auth rate limits.
 
+Audit, utility-rate, and RFID access histories are grouped under System
+navigation. List pages retain their data and routes while placing secondary row
+actions in an accessible menu. Displayed timestamps omit timezone abbreviations.
+
 ## Door status and control
 
 The unit page is monitoring-only and does not send unlock/close requests or read

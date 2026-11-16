@@ -121,6 +121,18 @@ class RampAdminWebTests(unittest.TestCase):
         self.assertNotIn(b"private-project.supabase.co", response.data)
         self.assertNotIn(b"sb_publishable_do_not_render", response.data)
 
+    def test_sign_in_page_uses_aligned_local_icons(self):
+        config = ramp_app.supabase_backend.SupabaseSettings(
+            "https://example.supabase.co", "test-publishable-key"
+        )
+        with patch.object(ramp_app.supabase_backend, "settings", return_value=config):
+            response = self.client.get("/login")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"#icon-building", response.data)
+        self.assertIn(b"#icon-eye-off", response.data)
+        self.assertIn(b'class="button button-primary login-submit"', response.data)
+
     def test_rpc_helper_uses_authenticated_supabase_rest_endpoint(self):
         config = ramp_app.supabase_backend.SupabaseSettings(
             "https://example.supabase.co", "test-publishable-key"
@@ -216,7 +228,7 @@ class RampAdminWebTests(unittest.TestCase):
             ramp_app.format_display_value(
                 "2026-02-03T15:04:00+00:00", "created_at"
             ),
-            "Feb 3, 2026 · 3:04 PM UTC",
+            "Feb 3, 2026 · 3:04 PM",
         )
         self.assertEqual(
             ramp_app.format_display_value("2026-02", "month"),
@@ -230,7 +242,7 @@ class RampAdminWebTests(unittest.TestCase):
             ramp_app.format_structured_value(
                 {"created_at": "2026-02-03T15:04:00+00:00", "status": "active"}
             ),
-            "Created at: Feb 3, 2026 · 3:04 PM UTC · Status: active",
+            "Created at: Feb 3, 2026 · 3:04 PM · Status: active",
         )
 
     def test_records_page_renders_readable_payment_dates(self):
@@ -256,8 +268,53 @@ class RampAdminWebTests(unittest.TestCase):
         response = self.client.get("/payments")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Feb 3, 2026 · 3:04 PM UTC".encode(), response.data)
+        self.assertIn("Feb 3, 2026 · 3:04 PM".encode(), response.data)
+        self.assertNotIn(b"UTC", response.data)
         self.assertIn(b'title="2026-02-03T15:04:00+00:00"', response.data)
+
+    def test_tenant_actions_are_collapsed_and_email_stays_below_name(self):
+        record_id = str(uuid4())
+        with ramp_app.get_db() as db:
+            db.execute(
+                "INSERT INTO records (section, id, data) VALUES (?, ?, ?)",
+                (
+                    "tenants",
+                    record_id,
+                    ramp_app._json_dumps(
+                        {
+                            "id": record_id,
+                            "name": "Jamie Doe",
+                            "email": "jamie@example.com",
+                            "phone": "+63 912 345 6789",
+                            "property": "Unit 4",
+                            "lease_start": "2025-01-01",
+                            "lease_end": "2026-01-01",
+                            "lease_status": "Active",
+                            "monthly_rent": 3000,
+                            "balance": 0,
+                            "status": "Active",
+                            "is_archived": False,
+                        }
+                    ),
+                ),
+            )
+
+        response = self.client.get("/tenants")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'<small>jamie@example.com</small>', response.data)
+        self.assertIn(b'data-label="Email"', response.data)
+        self.assertIn(b'aria-label="View record"', response.data)
+        self.assertIn(b'class="row-action-menu"', response.data)
+        self.assertIn(b'data-offline-edit="tenants"', response.data)
+        self.assertIn(b'action="/tenants/' + record_id.encode() + b'/archive"', response.data)
+        self.assertIn(b"Archive Jamie Doe? Its history will remain available.", response.data)
+        self.assertIn(b'href="/static/icons.svg#icon-sort"></use>', response.data)
+
+        ascending = self.client.get("/tenants?sort=name&direction=asc")
+        descending = self.client.get("/tenants?sort=name&direction=desc")
+        self.assertIn(b'href="/static/icons.svg#icon-sort-up"></use>', ascending.data)
+        self.assertIn(b'href="/static/icons.svg#icon-sort-down"></use>', descending.data)
 
     def test_audit_rows_show_safe_business_summaries(self):
         row = ramp_app._normalize_audit_row(

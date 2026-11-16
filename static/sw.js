@@ -1,9 +1,9 @@
-const CACHE_NAME = "ramp-admin-shell-v14";
+const CACHE_NAME = "ramp-admin-shell-v20";
 const SHELL_FILES = [
   "/static/form-ux.js?v=2",
   "/static/app.js?v=10",
-  "/static/style.css?v=8",
-  "/static/polish.css?v=13",
+  "/static/style.css?v=9",
+  "/static/polish.css?v=19",
   "/static/favicon.svg",
   "/static/icons.svg",
   "/static/site.webmanifest",

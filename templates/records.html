@@ -36,12 +36,12 @@
     {% if statuses or status != 'All' %}<label class="filter-select"><span class="visually-hidden">Filter by status</span><select name="status" onchange="this.form.submit()"><option value="All" {% if status == 'All' %}selected{% endif %}>All statuses</option>{% if status != 'All' and status not in statuses %}<option value="{{ status }}" selected>{{ status }}</option>{% endif %}{% for item in statuses %}<option value="{{ item }}" {% if status == item %}selected{% endif %}>{{ item }}</option>{% endfor %}</select><span class="select-arrow"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-chevron-down"></use></svg></span></label>{% endif %}
     {% if sort %}<input type="hidden" name="sort" value="{{ sort }}"><input type="hidden" name="direction" value="{{ direction }}">{% endif %}
     <button class="button button-secondary filter-button" type="submit">Filter</button>
-    {% if query or status != 'All' %}<a class="clear-filters" href="{{ url_for('records_page', section=section) }}">Clear filters</a>{% endif %}
+    {% if query or status != 'All' or period %}<a class="clear-filters" href="{{ url_for('records_page', section=section) }}">Clear filters</a>{% endif %}
     <span class="toolbar-spacer"></span><span class="row-count">Showing {{ page_start }}–{{ page_end }} of {{ filtered_total }}</span>
   </form>
   <div class="table-scroll">
     <table class="data-table">
-      <thead><tr>{% for key, label in config.columns %}{% set next_direction = 'desc' if sort == key and direction == 'asc' else 'asc' %}<th><a class="column-sort" href="{{ url_for('records_page', section=section, q=query, status=status, period=period, sort=key, direction=next_direction) }}">{{ label }} <span aria-hidden="true">{{ '↑' if sort == key and direction == 'asc' else '↓' if sort == key else '↕' }}</span></a></th>{% endfor %}<th class="actions-heading">Actions</th></tr></thead>
+      <thead><tr>{% for key, label in config.columns %}{% set next_direction = 'desc' if sort == key and direction == 'asc' else 'asc' %}<th{% if key in ['rent', 'monthly_rent', 'amount', 'balance'] %} data-numeric="true"{% endif %}><a class="column-sort" href="{{ url_for('records_page', section=section, q=query, status=status, period=period, sort=key, direction=next_direction) }}">{{ label }}<svg class="icon sort-indicator" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-{{ 'sort-up' if sort == key and direction == 'asc' else 'sort-down' if sort == key else 'sort' }}"></use></svg></a></th>{% endfor %}<th class="actions-heading">Actions</th></tr></thead>
       <tbody>
       {% for row in rows %}
         <tr data-record-id="{{ row.id }}">
@@ -56,8 +56,8 @@
                 <time class="audit-time" data-local-time datetime="{{ row.occurred }}" title="{{ row.occurred }}">
                   {{ row.occurred|display_value(key) }}
                 </time>
-              {% elif key == 'status' %}
-                <span class="status-pill status-{{ row[key]|lower|replace(' ', '-') }}">{{ row[key] }}</span>
+              {% elif key in ['status', 'lease_status'] %}
+                <span class="status-pill status-{{ row[key]|lower|replace(' ', '-') }}"><span class="status-dot" aria-hidden="true"></span>{{ row[key] }}</span>
               {% elif key == 'name' and section == 'landlords' %}
                 <span class="person-cell"><span class="avatar avatar-{{ loop.index0 % 5 }}">{{ row.name[:1] }}{{ (row.name.split()[-1][:1] if row.name.split()|length > 1 else '') }}</span><span><strong>{{ row.name }}</strong><small>{{ row.email }}</small></span></span>
               {% elif key in ['name', 'display_name'] and section in ['tenants', 'superadmins'] %}
@@ -78,42 +78,51 @@
             </td>
           {% endfor %}
           <td class="row-actions" data-label="Actions">
-            <a class="table-action" href="{{ url_for('record_detail', section=section, record_id=row.id) }}">View</a>
-            {% if section == 'landlords' and row.status|lower != 'archived' %}
-              <a class="table-action" data-offline-edit="landlords" data-record="{{ row|tojson|forceescape }}" href="{{ url_for('landlord_form', landlord_id=row.id) }}">Edit</a>
-            {% elif section == 'properties' and not row.get('is_archived') %}
-              <a class="table-action" data-offline-edit="properties" data-record="{{ row|tojson|forceescape }}" href="{{ url_for('property_form', record_id=row.id) }}">Edit</a>
-              {% if not preview_mode %}<a class="table-action" href="{{ url_for('unit_door_lock', record_id=row.id) }}">Door status</a>{% endif %}
-              <form action="{{ url_for('archive_property', record_id=row.id) }}" method="post" class="inline-form" data-offline-queue="true" data-confirm="Archive this property? Its history will remain available." data-loading-label="Archiving…"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% if row.updated_at %}<input type="hidden" name="updated_at" value="{{ row.updated_at }}">{% endif %}<button class="table-action muted-action" type="submit">Archive</button></form>
-            {% elif section == 'tenants' and not row.get('is_archived') %}
-              <a class="table-action" data-offline-edit="tenants" data-record="{{ row|tojson|forceescape }}" href="{{ url_for('tenant_form', record_id=row.id) }}">Edit</a>
-              {% if not preview_mode and row.email %}<form action="{{ url_for('invite_tenant', tenant_id=row.id) }}" method="post" class="inline-form" data-confirm="Send an account invitation to {{ row.name }}?" data-loading-label="Sending…"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="table-action" type="submit">Invite account</button></form>{% endif %}
-              <form action="{{ url_for('archive_tenant', record_id=row.id) }}" method="post" class="inline-form" data-offline-queue="true" data-confirm="Archive {{ row.name }}? Its history will remain available." data-loading-label="Archiving…"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% if row.updated_at %}<input type="hidden" name="updated_at" value="{{ row.updated_at }}">{% endif %}<button class="table-action muted-action" type="submit">Archive</button></form>
-            {% elif section == 'superadmins' and not preview_mode %}
-              <a class="table-action" data-offline-edit="superadmins" data-record="{{ row|tojson|forceescape }}" href="{{ url_for('superadmin_form', account_id=row.id) }}">Edit</a>
-              <form action="{{ url_for('update_superadmin_approval', account_id=row.id) }}" method="post" class="inline-form" data-offline-queue="true" data-confirm="{{ 'Approve ' if not row.is_approved else 'Disable ' }}{{ row.display_name }}?" data-loading-label="Updating…"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="approved" value="{{ 'true' if not row.is_approved else 'false' }}">{% if row.updated_at %}<input type="hidden" name="updated_at" value="{{ row.updated_at }}">{% endif %}<button class="table-action {{ 'muted-action' if row.is_approved else '' }}" type="submit">{{ 'Disable' if row.is_approved else 'Approve' }}</button></form>
-            {% elif section == 'expenses' %}
-              <a class="table-action" href="{{ url_for('expense_form', record_id=row.id) }}">Edit</a>
-            {% elif section == 'announcements' and not row.get('is_archived') %}
-              <a class="table-action" href="{{ url_for('announcement_form', record_id=row.id) }}">Edit</a>
-              <form action="{{ url_for('archive_announcement', record_id=row.id) }}" method="post" class="inline-form" data-requires-online="true" data-confirm="Archive this announcement? Its history will remain available." data-loading-label="Archiving…"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="table-action muted-action" type="submit">Archive</button></form>
-            {% elif section == 'settings' %}
-              <a class="table-action" href="{{ url_for('settings_form', record_id=row.id) }}">Edit settings</a>
+            <div class="row-action-controls">
+            <a class="table-action-icon" href="{{ url_for('record_detail', section=section, record_id=row.id) }}" aria-label="View record" title="View record"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-eye"></use></svg></a>
+            {% if (section == 'landlords' and row.status|lower != 'archived') or (section == 'properties' and not row.get('is_archived')) or (section == 'tenants' and not row.get('is_archived')) or (section == 'superadmins' and not preview_mode) or section in ['expenses', 'settings'] or (section == 'announcements' and not row.get('is_archived')) %}
+            <details class="row-action-menu">
+              <summary class="row-action-trigger" aria-label="More actions" title="More actions"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-more"></use></svg></summary>
+              <div class="row-action-menu-items">
+                {% if section == 'landlords' and row.status|lower != 'archived' %}
+                  <a class="row-menu-item" data-offline-edit="landlords" data-record="{{ row|tojson|forceescape }}" href="{{ url_for('landlord_form', landlord_id=row.id) }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-pencil"></use></svg> Edit</a>
+                {% elif section == 'properties' and not row.get('is_archived') %}
+                  <a class="row-menu-item" data-offline-edit="properties" data-record="{{ row|tojson|forceescape }}" href="{{ url_for('property_form', record_id=row.id) }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-pencil"></use></svg> Edit</a>
+                  {% if not preview_mode %}<a class="row-menu-item" href="{{ url_for('unit_door_lock', record_id=row.id) }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-building"></use></svg> Door status</a>{% endif %}
+                  <form action="{{ url_for('archive_property', record_id=row.id) }}" method="post" class="row-menu-form" data-offline-queue="true" data-confirm="Archive this property? Its history will remain available." data-loading-label="Archiving…"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% if row.updated_at %}<input type="hidden" name="updated_at" value="{{ row.updated_at }}">{% endif %}<button class="row-menu-item muted-action" type="submit"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-archive"></use></svg> Archive</button></form>
+                {% elif section == 'tenants' and not row.get('is_archived') %}
+                  <a class="row-menu-item" data-offline-edit="tenants" data-record="{{ row|tojson|forceescape }}" href="{{ url_for('tenant_form', record_id=row.id) }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-pencil"></use></svg> Edit</a>
+                  {% if not preview_mode and row.email %}<form action="{{ url_for('invite_tenant', tenant_id=row.id) }}" method="post" class="row-menu-form" data-confirm="Send an account invitation to {{ row.name }}?" data-loading-label="Sending…"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="row-menu-item" type="submit"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-mail"></use></svg> Invite account</button></form>{% endif %}
+                  <form action="{{ url_for('archive_tenant', record_id=row.id) }}" method="post" class="row-menu-form" data-offline-queue="true" data-confirm="Archive {{ row.name }}? Its history will remain available." data-loading-label="Archiving…"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% if row.updated_at %}<input type="hidden" name="updated_at" value="{{ row.updated_at }}">{% endif %}<button class="row-menu-item muted-action" type="submit"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-archive"></use></svg> Archive</button></form>
+                {% elif section == 'superadmins' and not preview_mode %}
+                  <a class="row-menu-item" data-offline-edit="superadmins" data-record="{{ row|tojson|forceescape }}" href="{{ url_for('superadmin_form', account_id=row.id) }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-pencil"></use></svg> Edit</a>
+                  <form action="{{ url_for('update_superadmin_approval', account_id=row.id) }}" method="post" class="row-menu-form" data-offline-queue="true" data-confirm="{{ 'Approve ' if not row.is_approved else 'Disable ' }}{{ row.display_name }}?" data-loading-label="Updating…"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="approved" value="{{ 'true' if not row.is_approved else 'false' }}">{% if row.updated_at %}<input type="hidden" name="updated_at" value="{{ row.updated_at }}">{% endif %}<button class="row-menu-item {{ 'muted-action' if row.is_approved else '' }}" type="submit"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-shield"></use></svg> {{ 'Disable' if row.is_approved else 'Approve' }}</button></form>
+                {% elif section == 'expenses' %}
+                  <a class="row-menu-item" href="{{ url_for('expense_form', record_id=row.id) }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-pencil"></use></svg> Edit</a>
+                {% elif section == 'announcements' and not row.get('is_archived') %}
+                  <a class="row-menu-item" href="{{ url_for('announcement_form', record_id=row.id) }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-pencil"></use></svg> Edit</a>
+                  <form action="{{ url_for('archive_announcement', record_id=row.id) }}" method="post" class="row-menu-form" data-requires-online="true" data-confirm="Archive this announcement? Its history will remain available." data-loading-label="Archiving…"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="row-menu-item muted-action" type="submit"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-archive"></use></svg> Archive</button></form>
+                {% elif section == 'settings' %}
+                  <a class="row-menu-item" href="{{ url_for('settings_form', record_id=row.id) }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-pencil"></use></svg> Edit settings</a>
+                {% endif %}
+                {% if section == 'landlords' and row.status|lower != 'archived' and row.status|lower == 'invited' %}
+                  <form action="{{ url_for('transition_landlord', landlord_id=row.id) }}" method="post" class="row-menu-form" data-offline-queue="true" data-loading-label="Updating…"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="activate">{% if row.updated_at %}<input type="hidden" name="updated_at" value="{{ row.updated_at }}">{% endif %}<button class="row-menu-item" type="submit"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-check"></use></svg> Activate</button></form>
+                {% elif section == 'landlords' and row.status|lower == 'active' %}
+                  <form action="{{ url_for('transition_landlord', landlord_id=row.id) }}" method="post" class="row-menu-form" data-offline-queue="true" data-confirm="Suspend {{ row.name }}?" data-loading-label="Updating…"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="suspend">{% if row.updated_at %}<input type="hidden" name="updated_at" value="{{ row.updated_at }}">{% endif %}<button class="row-menu-item muted-action" type="submit"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-shield"></use></svg> Suspend</button></form>
+                {% elif section == 'landlords' and row.status|lower == 'suspended' %}
+                  <form action="{{ url_for('transition_landlord', landlord_id=row.id) }}" method="post" class="row-menu-form" data-offline-queue="true" data-loading-label="Updating…"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="reactivate">{% if row.updated_at %}<input type="hidden" name="updated_at" value="{{ row.updated_at }}">{% endif %}<button class="row-menu-item" type="submit"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-check"></use></svg> Reactivate</button></form>
+                {% endif %}
+                {% if section == 'landlords' and row.status|lower != 'archived' %}
+                  <form action="{{ url_for('transition_landlord', landlord_id=row.id) }}" method="post" class="row-menu-form" data-offline-queue="true" data-confirm="Archive {{ row.name }}?" data-loading-label="Updating…"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="archive">{% if row.updated_at %}<input type="hidden" name="updated_at" value="{{ row.updated_at }}">{% endif %}<button class="row-menu-item muted-action" type="submit"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-archive"></use></svg> Archive</button></form>
+                {% endif %}
+              </div>
+            </details>
             {% endif %}
-            {% if section == 'landlords' and row.status|lower != 'archived' and row.status|lower == 'invited' %}
-              <form action="{{ url_for('transition_landlord', landlord_id=row.id) }}" method="post" class="inline-form" data-offline-queue="true" data-loading-label="Updating…"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="activate">{% if row.updated_at %}<input type="hidden" name="updated_at" value="{{ row.updated_at }}">{% endif %}<button class="table-action" type="submit">Activate</button></form>
-            {% elif section == 'landlords' and row.status|lower == 'active' %}
-              <form action="{{ url_for('transition_landlord', landlord_id=row.id) }}" method="post" class="inline-form" data-offline-queue="true" data-confirm="Suspend {{ row.name }}?" data-loading-label="Updating…"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="suspend">{% if row.updated_at %}<input type="hidden" name="updated_at" value="{{ row.updated_at }}">{% endif %}<button class="table-action muted-action" type="submit">Suspend</button></form>
-            {% elif section == 'landlords' and row.status|lower == 'suspended' %}
-              <form action="{{ url_for('transition_landlord', landlord_id=row.id) }}" method="post" class="inline-form" data-offline-queue="true" data-loading-label="Updating…"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="reactivate">{% if row.updated_at %}<input type="hidden" name="updated_at" value="{{ row.updated_at }}">{% endif %}<button class="table-action" type="submit">Reactivate</button></form>
-            {% endif %}
-            {% if section == 'landlords' and row.status|lower != 'archived' %}
-              <form action="{{ url_for('transition_landlord', landlord_id=row.id) }}" method="post" class="inline-form" data-offline-queue="true" data-confirm="Archive {{ row.name }}?" data-loading-label="Updating…"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="archive">{% if row.updated_at %}<input type="hidden" name="updated_at" value="{{ row.updated_at }}">{% endif %}<button class="table-action muted-action" type="submit">Archive</button></form>
-            {% endif %}
+            </div>
           </td>
         </tr>
       {% else %}
-        <tr><td class="empty-cell" colspan="{{ config.columns|length + 1 }}"><span class="empty-icon"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-search"></use></svg></span><strong>No matching {{ config.title|lower }}</strong><small>Try adjusting your search or filters.</small></td></tr>
+        <tr><td class="empty-cell" colspan="{{ config.columns|length + 1 }}"><span class="empty-icon"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-search"></use></svg></span><strong>No matching {{ config.title|lower }}</strong><small>Try adjusting your search or filters.</small>{% if query or status != 'All' or period %}<a class="button button-secondary empty-clear" href="{{ url_for('records_page', section=section) }}">Clear filters</a>{% endif %}</td></tr>
       {% endfor %}
       </tbody>
     </table>
