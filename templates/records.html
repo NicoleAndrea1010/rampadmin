@@ -59,9 +59,12 @@
               {% elif key == 'must_change_password' %}
                 {{ 'Yes' if row.get(key) else 'No' }}
               {% elif key == 'message' %}
-                <span class="truncate-cell" title="{{ row[key] }}">{{ row[key] }}</span>
+                <span class="truncate-cell" title="{{ row[key] }}">{{ row[key]|display_value(key) }}</span>
               {% else %}
-                {{ row.get(key, '—') or '—' }}
+                {% set value = row.get(key, '—') or '—' %}
+                <span class="table-value{% if value|string|length > 32 %} truncate-cell{% endif %}" title="{{ value }}">
+                  {{ value|display_value(key) }}
+                </span>
               {% endif %}
             </td>
           {% endfor %}

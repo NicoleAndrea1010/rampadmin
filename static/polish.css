@@ -648,6 +648,23 @@ select:focus-visible, textarea:focus-visible, summary:focus-visible {
 .detail-grid { gap: 18px 26px; }
 .detail-field dt { color: #64758c; font-size: 11px; }
 .detail-field dd { color: #263a57; font-size: 13px; }
+.record-id {
+  max-width: min(100%, 280px);
+  display: inline-block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+.table-value { max-width: 100%; }
+.truncate-cell {
+  max-width: 230px;
+  overflow: hidden;
+  display: inline-block;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
+}
 .private-detail-panel { border-color: #ead9b2; }
 
 .flash { padding: 13px 15px; border: 1px solid transparent; border-radius: 9px; line-height: 1.5; }

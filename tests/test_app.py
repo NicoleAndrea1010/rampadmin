@@ -186,7 +186,7 @@ class RampAdminWebTests(unittest.TestCase):
             data={
                 "csrf_token": csrf,
                 "name": "Amara Santos",
-                "company": "Santos Property Group",
+                "company": "Santos Property Group and Residential Holdings",
                 "email": "amara@example.com",
                 "phone": "+63 900 000 0000",
             },
@@ -195,12 +195,68 @@ class RampAdminWebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Amara Santos", response.data)
         self.assertIn(b'data-label="Landlord"', response.data)
+        self.assertIn(b'class="table-value truncate-cell"', response.data)
+        self.assertIn(
+            b'title="Santos Property Group and Residential Holdings"', response.data
+        )
         self.assertNotIn(b"Daniel Reyes", response.data)
         self.assertIn(b'data-loading-label="Filtering', response.data)
         export = self.client.get("/landlords/export.csv?q=Amara")
         self.assertEqual(export.status_code, 200)
         self.assertIn(b"Amara Santos", export.data)
         self.assertNotIn(b"Taylor Lee", export.data)
+
+    def test_display_value_formats_dates_timestamps_and_months(self):
+        self.assertEqual(
+            ramp_app.format_display_value("2026-02-03", "lease_start"),
+            "Feb 3, 2026",
+        )
+        self.assertEqual(
+            ramp_app.format_display_value(
+                "2026-02-03T15:04:00+00:00", "created_at"
+            ),
+            "Feb 3, 2026 · 3:04 PM UTC",
+        )
+        self.assertEqual(
+            ramp_app.format_display_value("2026-02", "month"),
+            "February 2026",
+        )
+        self.assertEqual(
+            ramp_app.format_display_value("Reference 2026-02-03", "message"),
+            "Reference 2026-02-03",
+        )
+        self.assertEqual(
+            ramp_app.format_structured_value(
+                {"created_at": "2026-02-03T15:04:00+00:00", "status": "active"}
+            ),
+            "Created at: Feb 3, 2026 · 3:04 PM UTC · Status: active",
+        )
+
+    def test_records_page_renders_readable_payment_dates(self):
+        record_id = str(uuid4())
+        with ramp_app.get_db() as db:
+            db.execute(
+                "INSERT INTO records (section, id, data) VALUES (?, ?, ?)",
+                (
+                    "payments",
+                    record_id,
+                    ramp_app._json_dumps(
+                        {
+                            "id": record_id,
+                            "reference": "PAY-2026-001",
+                            "amount": 1250,
+                            "paid_on": "2026-02-03T15:04:00+00:00",
+                            "status": "Paid",
+                        }
+                    ),
+                ),
+            )
+
+        response = self.client.get("/payments")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Feb 3, 2026 · 3:04 PM UTC".encode(), response.data)
+        self.assertIn(b'title="2026-02-03T15:04:00+00:00"', response.data)
 
     def test_csv_export_escapes_spreadsheet_formulas(self):
         with ramp_app.get_db() as db:

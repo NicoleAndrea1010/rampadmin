@@ -856,6 +856,69 @@ def currency_precise(value: int | float) -> str:
     return f"₱{value:,.2f}"
 
 
+def format_display_value(value: Any, field_name: str = "") -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, datetime):
+        parsed = value
+        has_time = True
+    elif isinstance(value, date):
+        parsed = datetime.combine(value, datetime.min.time())
+        has_time = False
+    elif isinstance(value, str):
+        text = value.strip()
+        if field_name == "month" and re.fullmatch(r"\d{4}-\d{2}", text):
+            try:
+                return datetime.strptime(text, "%Y-%m").strftime("%B %Y")
+            except ValueError:
+                return value
+        is_date_field = (
+            field_name in {
+                "date", "paid_on", "received", "created", "occurred",
+                "lease_start", "lease_end", "due_date", "month",
+            }
+            or field_name.endswith(("_at", "_date", "_on"))
+        )
+        if not is_date_field:
+            return value
+        has_time = "T" in text or " " in text
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return value
+    else:
+        return str(value)
+
+    date_label = parsed.strftime("%b %d, %Y").replace(" 0", " ")
+    if not has_time:
+        return date_label
+    time_label = parsed.strftime("%I:%M %p").lstrip("0")
+    timezone_label = ""
+    if parsed.tzinfo is not None:
+        offset = parsed.strftime("%z")
+        timezone_label = (
+            " UTC" if offset == "+0000"
+            else f" UTC{offset[:3]}:{offset[3:]}" if offset
+            else ""
+        )
+    return f"{date_label} · {time_label}{timezone_label}"
+
+
+def format_structured_value(value: Any, field_name: str = "") -> str:
+    if isinstance(value, dict):
+        return " · ".join(
+            f"{str(key).replace('_', ' ').capitalize()}: "
+            f"{format_structured_value(item, str(key))}"
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return " · ".join(format_structured_value(item) for item in value)
+    return format_display_value(value, field_name)
+
+
+app.jinja_env.filters["display_value"] = format_display_value
+
+
 @app.context_processor
 def inject_globals() -> dict[str, Any]:
     return {
@@ -1387,7 +1450,9 @@ def _detail_groups(section: str, record: dict[str, Any]) -> list[dict[str, Any]]
             elif isinstance(value, bool):
                 value = "Yes" if value else "No"
             elif isinstance(value, (list, dict)):
-                value = json.dumps(value, ensure_ascii=False)
+                value = format_structured_value(value, key)
+            else:
+                value = format_display_value(value, key)
             values.append({"label": label, "value": str(value)})
         if values:
             groups.append({"title": title, "fields": values})

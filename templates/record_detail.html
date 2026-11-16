@@ -5,7 +5,7 @@
 <div class="page-heading">
   <div>
     <h1>{{ record_label }}</h1>
-    <p class="page-subtitle">{{ section_title }}{% if record.id %} · Record {{ record.id }}{% endif %}</p>
+    <p class="page-subtitle">{{ section_title }}{% if record.id %} · Record <span class="record-id" title="{{ record.id }}">{{ record.id }}</span>{% endif %}</p>
   </div>
   <div class="heading-actions">
     {% if section == 'properties' and supabase_connected %}
@@ -33,7 +33,7 @@
         {% for field in group.fields %}
         <div class="detail-field">
           <dt>{{ field.label }}</dt>
-          <dd>{{ field.value }}</dd>
+          <dd title="{{ field.value }}">{{ field.value }}</dd>
         </div>
         {% endfor %}
       </dl>
