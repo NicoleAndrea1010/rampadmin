@@ -32,6 +32,8 @@ from flask import (
     session,
     url_for,
 )
+from openpyxl import Workbook
+from openpyxl.styles import Font
 from werkzeug.exceptions import HTTPException
 
 import supabase_backend
@@ -41,6 +43,9 @@ ROOT = Path(__file__).resolve().parent
 MIN_ENTRY_DATE = date(2025, 1, 1)
 AUTH_RATE_LIMIT_WINDOW_SECONDS = 15 * 60
 AUTH_RATE_LIMIT_MAX_ATTEMPTS = 5
+UNIT_PHOTO_MAX_FILES = 5
+UNIT_PHOTO_MAX_FILE_BYTES = 5 * 1024 * 1024
+UNIT_PHOTO_MAX_TOTAL_BYTES = 20 * 1024 * 1024
 
 
 def _database_path() -> Path:
@@ -133,6 +138,7 @@ def _valid_person_name(value: str) -> bool:
 
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 26 * 1024 * 1024
 _production = os.environ.get("RAMP_ENV", "").strip().casefold() == "production"
 _configured_secret = os.environ.get("RAMP_WEB_SECRET_KEY", "").strip()
 if _production and len(_configured_secret) < 32:
@@ -416,7 +422,7 @@ ENTITY_TABLES = {
 ENTITY_FIELDS = {
     "properties": (
         "id,landlord_id,unit_number,name,title,location,rent,monthly_rent,status,"
-        "is_archived,tenant_id,tenant_name,updated_at"
+        "is_archived,tenant_id,tenant_name,image_url,images,updated_at"
     ),
     "tenants": (
         "id,name,email,phone,unit_id,unit_number,landlord_id,"
@@ -461,7 +467,7 @@ DETAIL_FIELDS = {
         "tenant_id,tenant_name,current_tenancy_id,due_date,is_archived,is_published,"
         "details_completed,vacant_days,property_type,furnishing_status,security_deposit,"
         "advance_rent_months,minimum_lease_months,rent_due_day,late_fee,"
-        "water_rate_override,electricity_rate_override,updated_at"
+        "water_rate_override,electricity_rate_override,image_url,images,updated_at"
     ),
     "tenants": (
         "id,landlord_id,name,email,phone,contact_number,address,unit_id,unit_number,"
@@ -1419,7 +1425,7 @@ def fetch_supabase_table(table: str) -> list[dict[str, Any]]:
     page_size = 500
     fields = {
         "landlords": "id,uid,name,company_name,email,phone,status,created_at,updated_at",
-        "units": "id,landlord_id,unit_number,name,title,location,property_type,rent,monthly_rent,status,is_archived,tenant_id,tenant_name,updated_at",
+        "units": "id,landlord_id,unit_number,name,title,location,property_type,rent,monthly_rent,status,is_archived,tenant_id,tenant_name,image_url,images,updated_at",
         "tenants": "id,name,email,phone,unit_id,unit_number,lease_start,lease_end,lease_status,monthly_rent,balance,status,is_archived,landlord_id,updated_at",
         "payments": "id,reference_number,tenant_name,unit_number,month,amount,method,payment_method,status,unit_id,tenant_id,payment_date,date,transaction_type,created_at",
         "maintenance_tickets": "id,unit_id,unit_number,tenant_id,tenant_name,title,priority,status,assigned_to_name,sla_due_date,created_at,date",
@@ -2258,6 +2264,9 @@ def records_page(section: str):
     page_count = max(1, math.ceil(len(filtered) / RECORDS_PAGE_SIZE))
     if page_number < 1 or page_number > page_count:
         abort(404, description="That page does not exist.")
+    page_numbers = sorted(
+        {1, page_count, *range(max(2, page_number - 2), min(page_count, page_number + 2) + 1)}
+    )
     start_index = (page_number - 1) * RECORDS_PAGE_SIZE
     rows = filtered[start_index : start_index + RECORDS_PAGE_SIZE]
     if section == "inquiries":
@@ -2296,6 +2305,8 @@ def records_page(section: str):
         filtered_total=len(filtered),
         page_number=page_number,
         page_count=page_count,
+        page_numbers=page_numbers,
+        page_label=f"Page {page_number} of {page_count}",
         page_start=page_start,
         page_end=page_end,
         rows_for_count=len(all_rows),
@@ -2726,6 +2737,7 @@ def record_detail(section: str, record_id: str):
         section_title=SECTIONS[section]["title"],
         record=record,
         record_label=record_label,
+        unit_photos=_unit_photo_items(record) if section == "properties" else [],
         detail_groups=_detail_groups(section, record),
         related_groups=related_groups,
         edit_url=edit_url,
@@ -2949,11 +2961,53 @@ def export_csv(section: str):
     return response
 
 
+@app.get("/<section>/export.xlsx")
+def export_excel(section: str):
+    if section not in SECTIONS:
+        abort(404)
+    rows, _, _ = filtered_rows(section)
+    rows, _, _ = sorted_rows(section, rows)
+    columns = SECTIONS[section]["columns"]
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = re.sub(
+        r"[\[\]:*?/\\]", " ", SECTIONS[section]["title"]
+    ).strip()[:31] or "Records"
+    worksheet.append([label for _, label in columns])
+    for cell in worksheet[1]:
+        cell.font = Font(bold=True)
+    for row in rows:
+        worksheet.append(
+            [_safe_excel_cell(row.get(key, "")) for key, _ in columns]
+        )
+    worksheet.freeze_panes = "A2"
+    worksheet.auto_filter.ref = worksheet.dimensions
+
+    output = io.BytesIO()
+    workbook.save(output)
+    response = make_response(output.getvalue())
+    response.headers["Content-Type"] = (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    response.headers["Content-Disposition"] = f"attachment; filename={section}.xlsx"
+    return response
+
+
 def _safe_csv_cell(value: Any) -> Any:
     if isinstance(value, str) and value.lstrip(" \t\r\n").startswith(
         ("=", "+", "-", "@")
     ):
         return "'" + value
+    return value
+
+
+def _safe_excel_cell(value: Any) -> Any:
+    if isinstance(value, (dict, list, tuple)):
+        value = json.dumps(value, ensure_ascii=False, default=str)
+    if isinstance(value, str):
+        return _safe_csv_cell(value)
+    if isinstance(value, Decimal):
+        return float(value)
     return value
 
 
@@ -3012,6 +3066,106 @@ def _find_entity(section: str, record_id: str) -> dict[str, Any] | None:
     return dict(result[0]) if result else None
 
 
+def _unit_photo_paths(record: dict[str, Any]) -> list[str]:
+    raw_images = record.get("images")
+    if raw_images is not None and not isinstance(raw_images, list):
+        abort(409, description="This unit has an unsupported photo list. Contact support.")
+    candidates = list(raw_images or [])
+    if record.get("image_url"):
+        candidates.append(record["image_url"])
+    paths: list[str] = []
+    prefix = "units/"
+    for candidate in candidates:
+        if not isinstance(candidate, str) or not candidate.startswith(prefix):
+            abort(409, description="This unit has an unsupported photo path. Contact support.")
+        try:
+            path = supabase_backend.validate_unit_media_path(candidate)
+        except ValueError:
+            abort(409, description="This unit has an unsupported photo path. Contact support.")
+        if path not in paths:
+            paths.append(path)
+    return paths
+
+
+def _unit_photo_items(record: dict[str, Any]) -> list[dict[str, str]]:
+    config = getattr(g, "supabase_config", None)
+    if config is None:
+        return []
+    return [
+        {
+            "path": path,
+            "url": supabase_backend.public_unit_media_url(config, path),
+        }
+        for path in _unit_photo_paths(record)
+    ]
+
+
+def _read_unit_photo_uploads() -> list[tuple[bytes, str, str]]:
+    uploads = [
+        item
+        for item in request.files.getlist("unit_images")
+        if item and item.filename
+    ]
+    if len(uploads) > UNIT_PHOTO_MAX_FILES:
+        abort(400, description=f"Choose no more than {UNIT_PHOTO_MAX_FILES} unit photos.")
+
+    total_bytes = 0
+    photos: list[tuple[bytes, str, str]] = []
+    signatures = (
+        (lambda data: data.startswith(b"\xff\xd8\xff"), "jpg", "image/jpeg"),
+        (lambda data: data.startswith(b"\x89PNG\r\n\x1a\n"), "png", "image/png"),
+        (
+            lambda data: (
+                len(data) >= 12
+                and data[:4] == b"RIFF"
+                and data[8:12] == b"WEBP"
+            ),
+            "webp",
+            "image/webp",
+        ),
+    )
+    for upload in uploads:
+        content = upload.stream.read(UNIT_PHOTO_MAX_FILE_BYTES + 1)
+        if not content:
+            abort(400, description="Choose a non-empty unit photo.")
+        if len(content) > UNIT_PHOTO_MAX_FILE_BYTES:
+            abort(400, description="Each unit photo must be 5 MB or smaller.")
+        total_bytes += len(content)
+        if total_bytes > UNIT_PHOTO_MAX_TOTAL_BYTES:
+            abort(400, description="Unit photos must total 20 MB or less.")
+        detected = next(
+            (
+                (extension, content_type)
+                for matches, extension, content_type in signatures
+                if matches(content)
+            ),
+            None,
+        )
+        if detected is None:
+            abort(400, description="Use a JPEG, PNG, or WebP image for unit photos.")
+        extension, content_type = detected
+        photos.append((content, extension, content_type))
+    return photos
+
+
+def _cleanup_uploaded_unit_photos(object_paths: list[str]) -> None:
+    config = getattr(g, "supabase_config", None)
+    auth = getattr(g, "authenticated", None)
+    if config is None or auth is None:
+        return
+    for object_path in object_paths:
+        try:
+            supabase_backend.delete_unit_media(
+                config, auth["access_token"], object_path
+            )
+        except supabase_backend.SupabaseRequestError as error:
+            app.logger.warning(
+                "Unit photo cleanup failed with status %s and code %s.",
+                error.status,
+                error.code or "unknown",
+            )
+
+
 def _entity_form_values(section: str, record: dict[str, Any] | None = None) -> dict[str, Any]:
     values: dict[str, Any] = {}
     for field in ENTITY_FORM_FIELDS[section]:
@@ -3021,10 +3175,7 @@ def _entity_form_values(section: str, record: dict[str, Any] | None = None) -> d
         if field.get("kind") == "textarea":
             value = value
         elif field.get("kind") not in {"number", "date", "email", "tel", "select", "boolean"}:
-            value = _normalized_text(
-                value,
-                uppercase=key in {"name", "unit_number", "location", "title", "category"},
-            )
+            value = _normalized_text(value)
         if field.get("required") and not value:
             abort(400, description=f"{field['label']} is required.")
         if len(value) > field.get("max_length", 500):
@@ -3148,6 +3299,8 @@ def _render_entity_form(
         record=record,
         landlords=landlords,
         properties=properties,
+        unit_photos=_unit_photo_items(record) if section == "properties" and record else [],
+        can_manage_unit_photos=getattr(g, "supabase_config", None) is not None,
         form_values=submitted_values,
         form_error=form_error,
         new_record_id=(
@@ -3191,6 +3344,13 @@ def entity_form(section: str, record_id: str | None = None):
     if request.method == "GET":
         return _render_entity_form(section, record)
 
+    uploaded_photo_paths: list[str] = []
+    removed_photo_paths: list[str] = []
+    if record is not None and g.supabase_config is not None:
+        version = request.form.get("updated_at", "")
+        current_version = str(record.get("updated_at") or "")
+        if current_version and version != current_version:
+            abort(409, description="This record changed after you opened it. Reload before saving.")
     try:
         values = _entity_form_values(section, record)
         if record is None:
@@ -3200,7 +3360,51 @@ def entity_form(section: str, record_id: str | None = None):
             except ValueError:
                 abort(400, description="The record identifier is invalid.")
             values["id"] = record_id
+        if section == "properties":
+            photo_uploads = _read_unit_photo_uploads()
+            requested_removals = request.form.getlist("remove_images")
+            requested_cover = request.form.get("cover_image", "")
+            if (photo_uploads or requested_removals) and g.supabase_config is None:
+                abort(503, description="Unit photo management requires a live Supabase connection.")
+            existing_photo_paths = _unit_photo_paths(record) if record else []
+            if any(path not in existing_photo_paths for path in requested_removals):
+                abort(400, description="Choose photos that belong to this unit.")
+            if requested_cover and requested_cover not in existing_photo_paths:
+                abort(400, description="Choose a cover photo that belongs to this unit.")
+            removed_photo_paths = list(dict.fromkeys(requested_removals))
+            remaining_photo_paths = [
+                path for path in existing_photo_paths if path not in removed_photo_paths
+            ]
+            cover_changed = bool(
+                requested_cover
+                and requested_cover != (record or {}).get("image_url")
+            )
+            if record is None or photo_uploads or removed_photo_paths or cover_changed:
+                values["images"] = remaining_photo_paths
+                if photo_uploads:
+                    for content, extension, content_type in photo_uploads:
+                        object_path = f"units/{record_id}/{uuid4().hex}.{extension}"
+                        uploaded_photo_paths.append(object_path)
+                        try:
+                            supabase_backend.upload_unit_media(
+                                g.supabase_config,
+                                g.authenticated["access_token"],
+                                object_path,
+                                content,
+                                content_type,
+                            )
+                        except supabase_backend.SupabaseRequestError:
+                            _cleanup_uploaded_unit_photos(uploaded_photo_paths)
+                            raise
+                    values["images"].extend(uploaded_photo_paths)
+                if requested_cover in values["images"]:
+                    values["image_url"] = requested_cover
+                elif (record or {}).get("image_url") in values["images"]:
+                    values["image_url"] = record["image_url"]
+                else:
+                    values["image_url"] = values["images"][0] if values["images"] else None
     except HTTPException as error:
+        _cleanup_uploaded_unit_photos(uploaded_photo_paths)
         if request.headers.get("X-Ramp-Form-Request") == "1":
             return jsonify(error=error.description), error.code or 400
         return _render_entity_form(
@@ -3257,41 +3461,64 @@ def entity_form(section: str, record_id: str | None = None):
                     flash("Record was already synchronized.", "success")
                     return redirect(url_for("records_page", section=section))
                 abort(409, description="A record with this identifier already exists.")
-        if record is not None:
-            version = request.form.get("updated_at", "")
-            current_version = str(record.get("updated_at") or "")
-            if current_version and version != current_version:
-                abort(409, description="This record changed after you opened it. Reload before saving.")
         if (
             section == "announcements"
             and record is not None
             and record.get("is_archived") is True
         ):
             abort(409, description="Archived announcements are read-only.")
-        result = supabase_backend.api_request(
-            g.supabase_config,
-            g.authenticated["access_token"],
-            ENTITY_TABLES[section],
-            method="POST" if record is None else "PATCH",
-            query=(
-                {"select": "id"}
-                if record is None
-                else {
-                    "id": f"eq.{record_id}",
-                    **(
-                        {"updated_at": f"eq.{record.get('updated_at')}"}
-                        if record.get("updated_at")
-                        else {}
-                    ),
-                    "select": "id",
-                }
-            ),
-            body=values,
-            prefer="return=representation",
-        )
+        try:
+            result = supabase_backend.api_request(
+                g.supabase_config,
+                g.authenticated["access_token"],
+                ENTITY_TABLES[section],
+                method="POST" if record is None else "PATCH",
+                query=(
+                    {"select": "id"}
+                    if record is None
+                    else {
+                        "id": f"eq.{record_id}",
+                        **(
+                            {"updated_at": f"eq.{record.get('updated_at')}"}
+                            if record.get("updated_at")
+                            else {}
+                        ),
+                        "select": "id",
+                    }
+                ),
+                body=values,
+                prefer="return=representation",
+            )
+        except supabase_backend.SupabaseRequestError:
+            _cleanup_uploaded_unit_photos(uploaded_photo_paths)
+            raise
         if not result:
+            _cleanup_uploaded_unit_photos(uploaded_photo_paths)
             abort(409, description="The record changed or could not be saved. Refresh and try again.")
-    flash(f"{SECTIONS[section]['title'].rstrip('s')} saved.", "success")
+    photo_delete_failed = False
+    if removed_photo_paths and not is_preview:
+        for object_path in removed_photo_paths:
+            try:
+                supabase_backend.delete_unit_media(
+                    g.supabase_config,
+                    g.authenticated["access_token"],
+                    object_path,
+                )
+            except supabase_backend.SupabaseRequestError as error:
+                app.logger.warning(
+                    "Removed unit photo could not be deleted from Storage "
+                    "(status %s, code %s).",
+                    error.status,
+                    error.code or "unknown",
+                )
+                photo_delete_failed = True
+    if photo_delete_failed:
+        flash(
+            "Unit changes were saved, but one or more removed photo files could not be deleted from Storage. Contact support.",
+            "error",
+        )
+    else:
+        flash(f"{SECTIONS[section]['title'].rstrip('s')} saved.", "success")
     return redirect(url_for("records_page", section=section))
 
 
@@ -3381,16 +3608,6 @@ def archive_entity(section: str, record_id: str):
     return redirect(url_for("records_page", section=section))
 
 
-@app.get("/properties/<record_id>/door-lock")
-def unit_door_lock(record_id: str):
-    if g.supabase_config is None:
-        abort(503, description="Door status requires a live Supabase connection.")
-    unit = _find_entity("properties", record_id)
-    if unit is None:
-        abort(404)
-    return render_template("door_lock.html", unit=unit)
-
-
 @app.route("/superadmins/new", methods=["GET", "POST"])
 @app.route("/superadmins/<account_id>/edit", methods=["GET", "POST"])
 def superadmin_form(account_id: str | None = None):
@@ -3407,7 +3624,6 @@ def superadmin_form(account_id: str | None = None):
     if request.method == "POST":
         name = _normalized_text(
             request.form.get("display_name", ""),
-            uppercase=True,
         )
         if (
             len(name) < 2
@@ -3573,8 +3789,8 @@ def landlord_form(landlord_id: str | None = None):
         if str(landlord.get("status", "")).casefold() == "archived":
             abort(409, description="Archived landlord records are read-only.")
     if request.method == "POST":
-        name = _normalized_text(request.form.get("name", ""), uppercase=True)
-        company = _normalized_text(request.form.get("company", ""), uppercase=True)
+        name = _normalized_text(request.form.get("name", ""))
+        company = _normalized_text(request.form.get("company", ""))
         email = request.form.get("email", "").strip().lower()
         phone_input = request.form.get("phone", "").strip()
         phone = _normalize_ph_mobile(phone_input)

@@ -19,7 +19,13 @@
     {% if section == 'expenses' %}<a class="button button-primary" href="{{ url_for('expense_form') }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-plus"></use></svg> Add expense</a>{% endif %}
     {% if section == 'announcements' %}<a class="button button-primary" href="{{ url_for('announcement_form') }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-plus"></use></svg> Add announcement</a>{% endif %}
     {% if section == 'superadmins' and not preview_mode %}<a class="button button-primary" href="{{ url_for('superadmin_form') }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-plus"></use></svg> Invite superadmin</a>{% endif %}
-    <a class="button button-secondary" href="{{ url_for('export_csv', section=section, q=query, status=status, category=category, period=period, sort=sort, direction=direction) }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-download"></use></svg> Export CSV</a>
+    <details class="export-menu">
+      <summary class="button button-secondary"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-download"></use></svg> Export <svg class="icon export-chevron" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-chevron-down"></use></svg></summary>
+      <div class="export-menu-options">
+        <a href="{{ url_for('export_csv', section=section, q=query, status=status, category=category, period=period, sort=sort, direction=direction) }}">CSV (.csv)</a>
+        <a href="{{ url_for('export_excel', section=section, q=query, status=status, category=category, period=period, sort=sort, direction=direction) }}">Excel (.xlsx)</a>
+      </div>
+    </details>
   </div>
 </div>
 
@@ -131,8 +137,7 @@
                 {% if section == 'landlords' and row.status|lower != 'archived' %}
                   <a class="row-menu-item" data-offline-edit="landlords" data-record="{{ row|tojson|forceescape }}" href="{{ url_for('landlord_form', landlord_id=row.id) }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-pencil"></use></svg> Edit</a>
                 {% elif section == 'properties' and not row.get('is_archived') %}
-                  <a class="row-menu-item" data-offline-edit="properties" data-record="{{ row|tojson|forceescape }}" href="{{ url_for('property_form', record_id=row.id) }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-pencil"></use></svg> Edit</a>
-                  {% if not preview_mode %}<a class="row-menu-item" href="{{ url_for('unit_door_lock', record_id=row.id) }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-building"></use></svg> Door status</a>{% endif %}
+                  <a class="row-menu-item" href="{{ url_for('property_form', record_id=row.id) }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-pencil"></use></svg> Edit</a>
                   <form action="{{ url_for('archive_property', record_id=row.id) }}" method="post" class="row-menu-form" data-offline-queue="true" data-confirm="Archive this property? Its history will remain available." data-loading-label="Archiving…"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% if row.updated_at %}<input type="hidden" name="updated_at" value="{{ row.updated_at }}">{% endif %}<button class="row-menu-item muted-action" type="submit"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-archive"></use></svg> Archive</button></form>
                 {% elif section == 'tenants' and not row.get('is_archived') %}
                   <a class="row-menu-item" data-offline-edit="tenants" data-record="{{ row|tojson|forceescape }}" href="{{ url_for('tenant_form', record_id=row.id) }}"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-pencil"></use></svg> Edit</a>
@@ -205,7 +210,17 @@
     {% else %}
     <span class="button button-secondary pagination-disabled" aria-disabled="true">Previous</span>
     {% endif %}
-    <span>Page {{ page_number }} of {{ page_count }}</span>
+    <div class="pagination-pages" aria-label="Page numbers">
+      {% for number in page_numbers %}
+        {% if not loop.first and number - loop.previtem > 1 %}<span class="pagination-ellipsis" aria-hidden="true">…</span>{% endif %}
+        {% if number == page_number %}
+          <span class="button button-secondary page-number-current" aria-current="page">{{ number }}</span>
+        {% else %}
+          <a class="button button-secondary page-number-link" href="{{ url_for('records_page', section=section, q=query, status=status, category=category, period=period, sort=sort, direction=direction, page=number) }}" aria-label="Page {{ number }}">{{ number }}</a>
+        {% endif %}
+      {% endfor %}
+    </div>
+    <span class="pagination-page-label">{{ page_label }}</span>
     {% if page_number < page_count %}
     <a class="button button-secondary" href="{{ url_for('records_page', section=section, q=query, status=status, category=category, period=period, sort=sort, direction=direction, page=page_number + 1) }}">Next</a>
     {% else %}

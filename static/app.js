@@ -556,19 +556,26 @@ async function queueForm(form, scope) {
 }
 
 async function sendForm(form, scope, submitter = null) {
-  const values = new URLSearchParams(new FormData(form));
+  const formData = new FormData(form);
+  const hasUploads = [...form.querySelectorAll('input[type="file"]')]
+    .some((input) => [...input.files].some((file) => file.size > 0));
+  const values = new URLSearchParams(formData);
   setFormSubmitting(form, true, submitter);
   form.setAttribute("aria-busy", "true");
   try {
     if (!navigator.onLine) throw new TypeError("Browser is offline");
+    const headers = { "X-Ramp-Form-Request": "1" };
+    let body = values.toString();
+    if (hasUploads) {
+      body = formData;
+    } else {
+      headers["Content-Type"] = "application/x-www-form-urlencoded;charset=UTF-8";
+    }
     const response = await fetch(form.action, {
       method: "POST",
       credentials: "same-origin",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-        "X-Ramp-Form-Request": "1",
-      },
-      body: values.toString(),
+      headers,
+      body,
     });
     if (response.ok) {
       if (response.redirected && new URL(response.url).pathname === "/login") {
@@ -579,12 +586,18 @@ async function sendForm(form, scope, submitter = null) {
       return;
     }
     if ([502, 503, 504].includes(response.status)) {
+      if (hasUploads) {
+        showFormError(form, "The photo upload could not be confirmed. Reconnect, reload the unit, and check its photos before retrying.");
+        return;
+      }
       await queueForm(form, scope);
       return;
     }
     showFormError(form, await responseErrorMessage(response));
   } catch (error) {
-    if (error instanceof TypeError || !navigator.onLine) {
+    if (hasUploads) {
+      showFormError(form, "The photo upload could not be confirmed. Reconnect, reload the unit, and check its photos before retrying.");
+    } else if (error instanceof TypeError || !navigator.onLine) {
       await queueForm(form, scope);
     } else {
       showFormError(form, "The change could not be saved.");

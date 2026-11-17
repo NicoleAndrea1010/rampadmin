@@ -8,9 +8,6 @@
     <p class="page-subtitle">{{ section_title }}{% if record.id %} · Record <span class="record-id" title="{{ record.id }}">{{ record.id }}</span>{% endif %}</p>
   </div>
   <div class="heading-actions">
-    {% if section == 'properties' and supabase_connected %}
-    <a class="button button-secondary" href="{{ url_for('unit_door_lock', record_id=record.id) }}">Door status</a>
-    {% endif %}
     {% if edit_url %}
     <a class="button button-primary" href="{{ edit_url }}">Edit record</a>
     {% endif %}
@@ -23,6 +20,19 @@
   <div class="detail-main">
     {% if section == 'documents' %}
     <section class="panel detail-panel"><p class="page-subtitle">File opening is disabled until a private Supabase Storage access path is verified. This page displays metadata only.</p></section>
+    {% endif %}
+    {% if section == 'properties' and unit_photos %}
+    <section class="panel detail-panel unit-photo-detail">
+      <div class="panel-header"><h2>Unit photos</h2></div>
+      <div class="unit-photo-grid">
+        {% for photo in unit_photos %}
+        <a class="unit-photo-card" href="{{ photo.url }}" target="_blank" rel="noopener">
+          <img src="{{ photo.url }}" alt="Unit photo {{ loop.index }}" loading="lazy">
+          <span>Open photo</span>
+        </a>
+        {% endfor %}
+      </div>
+    </section>
     {% endif %}
     {% if section == 'payments' and payment_receipt_url %}
     <section class="panel detail-panel payment-receipt-panel">

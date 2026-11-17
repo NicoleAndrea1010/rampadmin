@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import tempfile
@@ -5,6 +6,8 @@ import unittest
 from pathlib import Path
 from uuid import uuid4
 from unittest.mock import patch
+
+from openpyxl import load_workbook
 
 import app as ramp_app
 
@@ -148,8 +151,9 @@ class RampAdminWebTests(unittest.TestCase):
         self.assertIn(b"/static/ramp_admin_logo.png", response.data)
         self.assertIn(b"#icon-building", response.data)
         self.assertIn(b"#icon-eye-off", response.data)
-        self.assertIn(b"Rental Administration", response.data)
-        self.assertIn(b"Maintenance Platform", response.data)
+        self.assertIn(b"Rental Administration Maintenance Platform", response.data)
+        self.assertIn(b"<h1>RAMP</h1>", response.data)
+        self.assertIn(b'class="login-brand-footer">RAMP</span>', response.data)
         self.assertNotIn(b"Properties, tenants, payments, and maintenance", response.data)
         self.assertNotIn(b"Supabase project configuration detected", response.data)
         self.assertNotIn(b"Only approved super-admin accounts can access", response.data)
@@ -327,18 +331,26 @@ class RampAdminWebTests(unittest.TestCase):
         )
         response = self.client.get("/landlords?q=Amara")
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"AMARA SANTOS", response.data)
+        self.assertIn(b"Amara Santos", response.data)
         self.assertIn(b'data-label="Landlord"', response.data)
         self.assertIn(b'class="table-value truncate-cell"', response.data)
         self.assertIn(
-            b'title="SANTOS PROPERTY GROUP AND RESIDENTIAL HOLDINGS"', response.data
+            b'title="Santos Property Group and Residential Holdings"', response.data
         )
         self.assertNotIn(b"Daniel Reyes", response.data)
         self.assertIn(b'data-loading-label="Filtering', response.data)
+        self.assertIn(b"CSV (.csv)", response.data)
+        self.assertIn(b"Excel (.xlsx)", response.data)
         export = self.client.get("/landlords/export.csv?q=Amara")
         self.assertEqual(export.status_code, 200)
-        self.assertIn(b"AMARA SANTOS", export.data)
+        self.assertIn(b"Amara Santos", export.data)
         self.assertNotIn(b"Taylor Lee", export.data)
+        excel = self.client.get("/landlords/export.xlsx?q=Amara")
+        self.assertEqual(excel.status_code, 200)
+        workbook = load_workbook(io.BytesIO(excel.data))
+        self.assertEqual(workbook.active["A2"].value, "Amara Santos")
+        self.assertEqual(workbook.active.freeze_panes, "A2")
+        workbook.close()
 
     def test_display_value_formats_dates_timestamps_and_months(self):
         self.assertEqual(
@@ -554,6 +566,36 @@ class RampAdminWebTests(unittest.TestCase):
         descending = self.client.get("/tenants?sort=name&direction=desc")
         self.assertIn(b'href="/static/icons.svg#icon-sort-up"></use>', ascending.data)
         self.assertIn(b'href="/static/icons.svg#icon-sort-down"></use>', descending.data)
+
+    def test_records_pagination_shows_current_and_neighboring_pages(self):
+        with ramp_app.get_db() as db:
+            for index in range(120):
+                record_id = str(uuid4())
+                db.execute(
+                    "INSERT INTO records (section, id, data) VALUES (?, ?, ?)",
+                    (
+                        "properties",
+                        record_id,
+                        ramp_app._json_dumps(
+                            {
+                                "id": record_id,
+                                "unit_number": f"Unit {index + 1}",
+                                "name": f"Unit {index + 1}",
+                                "rent": 1,
+                                "status": "Vacant",
+                            }
+                        ),
+                    ),
+                )
+
+        response = self.client.get("/properties?page=2")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Page 2", response.data)
+        self.assertIn(b"aria-current=\"page\">2</span>", response.data)
+        self.assertIn(b"page=1", response.data)
+        self.assertIn(b"page=3", response.data)
+        self.assertIn(b"Showing 51\xe2\x80\x93100 of 120", response.data)
 
     def test_inquiry_application_is_summarized_as_a_chip(self):
         record_id = str(uuid4())
@@ -793,6 +835,14 @@ class RampAdminWebTests(unittest.TestCase):
             response.data,
         )
 
+        excel = self.client.get("/landlords/export.xlsx")
+        self.assertEqual(excel.status_code, 200)
+        workbook = load_workbook(io.BytesIO(excel.data), read_only=True)
+        formula_cell = workbook.active["A2"]
+        self.assertTrue(formula_cell.value.startswith("'="))
+        self.assertNotEqual(formula_cell.data_type, "f")
+        workbook.close()
+
     def test_records_page_paginates_filtered_rows(self):
         created_at = "2026-01-01T00:00:00+00:00"
         with ramp_app.get_db() as db:
@@ -840,11 +890,11 @@ class RampAdminWebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         march = self.client.get("/expenses?period=2026-03")
         self.assertEqual(march.status_code, 200)
-        self.assertIn(b"WATER PUMP REPAIR", march.data)
+        self.assertIn(b"Water pump repair", march.data)
         self.assertIn(b"\xe2\x82\xb11,250.50", march.data)
         april = self.client.get("/expenses?period=2026-04")
         self.assertEqual(april.status_code, 200)
-        self.assertNotIn(b"WATER PUMP REPAIR", april.data)
+        self.assertNotIn(b"Water pump repair", april.data)
 
     def test_expense_category_filter_applies_to_list_and_csv(self):
         csrf = self.csrf_token()
@@ -866,12 +916,12 @@ class RampAdminWebTests(unittest.TestCase):
             self.assertEqual(response.status_code, 302)
         filtered = self.client.get("/expenses?category=maintenance")
         self.assertEqual(filtered.status_code, 200)
-        self.assertIn(b"WATER PUMP REPAIR", filtered.data)
-        self.assertNotIn(b"INTERNET BILL", filtered.data)
+        self.assertIn(b"Water pump repair", filtered.data)
+        self.assertNotIn(b"Internet bill", filtered.data)
         exported = self.client.get("/expenses/export.csv?category=maintenance")
         self.assertEqual(exported.status_code, 200)
-        self.assertIn(b"WATER PUMP REPAIR", exported.data)
-        self.assertNotIn(b"INTERNET BILL", exported.data)
+        self.assertIn(b"Water pump repair", exported.data)
+        self.assertNotIn(b"Internet bill", exported.data)
 
     def test_entity_form_normalizes_text_and_validates_phone_and_money_precision(self):
         csrf = self.csrf_token()
@@ -888,7 +938,7 @@ class RampAdminWebTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 302)
         tenant = ramp_app.rows_for("tenants")[0]
-        self.assertEqual(tenant["name"], "MARIA DELA CRUZ")
+        self.assertEqual(tenant["name"], "Maria Dela Cruz")
         self.assertEqual(tenant["email"], "maria@example.com")
         self.assertEqual(tenant["phone"], "09171234567")
 
@@ -976,7 +1026,7 @@ class RampAdminWebTests(unittest.TestCase):
         )
         listing = self.client.get("/announcements?status=Archived")
         self.assertEqual(listing.status_code, 200)
-        self.assertIn(b"WATER SERVICE UPDATE", listing.data)
+        self.assertIn(b"Water service update", listing.data)
         self.assertNotIn(b">Edit</a>", listing.data)
 
     def test_settings_update_only_changes_an_existing_record(self):
@@ -1164,7 +1214,7 @@ class RampAdminWebTests(unittest.TestCase):
         response = self.client.get("/search?q=Morgan")
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Search results", response.data)
-        self.assertIn(b"MORGAN RIVERA", response.data)
+        self.assertIn(b"Morgan Rivera", response.data)
         self.assertIn(b"Landlords", response.data)
         self.assertIn(b"View all", response.data)
 
@@ -1243,7 +1293,7 @@ class RampAdminWebTests(unittest.TestCase):
         changed = next(
             item for item in ramp_app.rows_for("landlords") if item["id"] == landlord["id"]
         )
-        self.assertEqual(changed["company"], "LEE & CO.")
+        self.assertEqual(changed["company"], "Lee & Co.")
         self.assertEqual(changed["status"], "Archived")
 
     def test_active_landlord_can_be_archived_without_suspending_first(self):
@@ -1520,60 +1570,9 @@ class RampAdminWebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         request_api.assert_called_once()
 
-    def test_unit_door_lock_page_is_monitoring_only(self):
-        config, auth = self.set_live_session()
-        unit_id = str(uuid4())
-        with (
-            patch.object(ramp_app.supabase_backend, "settings", return_value=config),
-            patch.object(
-                ramp_app.supabase_backend, "load_session", return_value=(auth, "live-csrf")
-            ),
-            patch.object(
-                ramp_app,
-                "_find_entity",
-                return_value={
-                    "id": unit_id,
-                    "unit_number": "A-12",
-                    "name": "Harbor House",
-                    "is_archived": False,
-                },
-            ),
-        ):
-            response = self.client.get(f"/properties/{unit_id}/door-lock")
-        self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Controls unavailable", response.data)
-        self.assertIn(b"No door command was sent.", response.data)
-        self.assertNotIn(b"request_superadmin_unlock", response.data)
-        self.assertNotIn(
-            f'action="/properties/{unit_id}/door-lock"'.encode(), response.data
-        )
-
-    def test_unit_door_lock_page_does_not_send_commands(self):
-        config, auth = self.set_live_session()
-        unit_id = str(uuid4())
-        with (
-            patch.object(ramp_app.supabase_backend, "settings", return_value=config),
-            patch.object(
-                ramp_app.supabase_backend, "load_session", return_value=(auth, "live-csrf")
-            ),
-            patch.object(
-                ramp_app,
-                "_find_entity",
-                return_value={
-                    "id": unit_id,
-                    "unit_number": "A-12",
-                    "name": "Harbor House",
-                    "is_archived": False,
-                },
-            ),
-            patch.object(ramp_app.supabase_backend, "rpc_request") as request_rpc,
-        ):
-            response = self.client.post(
-                f"/properties/{unit_id}/door-lock",
-                data={"csrf_token": "live-csrf"},
-            )
-        self.assertEqual(response.status_code, 405)
-        request_rpc.assert_not_called()
+    def test_unit_door_lock_route_is_removed(self):
+        response = self.client.get(f"/properties/{uuid4()}/door-lock")
+        self.assertEqual(response.status_code, 404)
 
     def test_tenant_detail_excludes_credentials_and_marks_private_information(self):
         config, auth = self.set_live_session()
@@ -1791,6 +1790,244 @@ class RampAdminWebTests(unittest.TestCase):
                 "tenant-payment-receipts",
                 "tenant_123/pay_123/../private.webp",
             )
+
+    def test_unit_media_storage_is_scoped_to_the_public_bucket_and_unit_paths(self):
+        config = ramp_app.supabase_backend.SupabaseSettings(
+            "https://example.supabase.co", "test-publishable-key"
+        )
+        unit_id = str(uuid4())
+        object_path = f"units/{unit_id}/photo.webp"
+        with patch.object(ramp_app.supabase_backend, "_request") as storage_request:
+            ramp_app.supabase_backend.upload_unit_media(
+                config, "admin-access-token", object_path, b"image", "image/webp"
+            )
+        storage_request.assert_called_once()
+        self.assertIn("/storage/v1/object/ramp_media/units/", storage_request.call_args.args[1])
+        self.assertEqual(storage_request.call_args.kwargs["body"], b"image")
+        self.assertEqual(storage_request.call_args.kwargs["content_type"], "image/webp")
+
+        with self.assertRaises(ValueError):
+            ramp_app.supabase_backend.delete_unit_media(
+                config, "admin-access-token", "other-folder/private.webp"
+            )
+
+    def test_live_property_create_uploads_unit_photo_and_stores_its_path(self):
+        config, auth = self.set_live_session()
+        record_id = str(uuid4())
+        with (
+            patch.object(ramp_app.supabase_backend, "settings", return_value=config),
+            patch.object(
+                ramp_app.supabase_backend, "load_session", return_value=(auth, "live-csrf")
+            ),
+            patch.object(
+                ramp_app.supabase_backend, "upload_unit_media"
+            ) as upload_photo,
+            patch.object(
+                ramp_app.supabase_backend, "api_request", return_value=[{"id": record_id}]
+            ) as request_api,
+        ):
+            response = self.client.post(
+                "/properties/new",
+                data={
+                    "csrf_token": "live-csrf",
+                    "record_id": record_id,
+                    "unit_number": "B-14",
+                    "name": "Harbor Homes",
+                    "location": "Pasay",
+                    "landlord_id": "",
+                    "monthly_rent": "25000",
+                    "status": "Vacant",
+                    "unit_images": (io.BytesIO(b"\xff\xd8\xffunit photo"), "unit.jpg"),
+                },
+            )
+        self.assertEqual(response.status_code, 302)
+        upload_photo.assert_called_once()
+        self.assertEqual(upload_photo.call_args.args[1], "admin-access-token")
+        object_path = upload_photo.call_args.args[2]
+        self.assertTrue(object_path.startswith(f"units/{record_id}/"))
+        self.assertEqual(request_api.call_args.kwargs["body"]["images"], [object_path])
+        self.assertEqual(request_api.call_args.kwargs["body"]["image_url"], object_path)
+
+    def test_unit_photo_removal_updates_unit_and_deletes_storage_object(self):
+        config, auth = self.set_live_session()
+        record_id = str(uuid4())
+        object_path = f"units/{record_id}/existing.webp"
+        unit = {
+            "id": record_id,
+            "unit_number": "B-14",
+            "name": "Harbor Homes",
+            "location": "Pasay",
+            "landlord_id": None,
+            "rent": 25000,
+            "monthly_rent": 25000,
+            "status": "Vacant",
+            "images": [object_path],
+            "image_url": object_path,
+        }
+        with (
+            patch.object(ramp_app.supabase_backend, "settings", return_value=config),
+            patch.object(
+                ramp_app.supabase_backend, "load_session", return_value=(auth, "live-csrf")
+            ),
+            patch.object(
+                ramp_app.supabase_backend,
+                "api_request",
+                side_effect=[[unit], [{"id": record_id}]],
+            ) as request_api,
+            patch.object(
+                ramp_app.supabase_backend, "delete_unit_media"
+            ) as delete_photo,
+        ):
+            response = self.client.post(
+                f"/properties/{record_id}/edit",
+                data={
+                    "csrf_token": "live-csrf",
+                    "unit_number": "B-14",
+                    "name": "Harbor Homes",
+                    "location": "Pasay",
+                    "landlord_id": "",
+                    "monthly_rent": "25000",
+                    "status": "Vacant",
+                    "remove_images": object_path,
+                },
+            )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(request_api.call_args.kwargs["body"]["images"], [])
+        self.assertIsNone(request_api.call_args.kwargs["body"]["image_url"])
+        delete_photo.assert_called_once_with(config, "admin-access-token", object_path)
+
+    def test_unit_photo_cover_can_be_changed_without_reuploading(self):
+        config, auth = self.set_live_session()
+        record_id = str(uuid4())
+        first_path = f"units/{record_id}/first.webp"
+        second_path = f"units/{record_id}/second.webp"
+        unit = {
+            "id": record_id,
+            "unit_number": "B-14",
+            "name": "Harbor Homes",
+            "location": "Pasay",
+            "landlord_id": None,
+            "rent": 25000,
+            "monthly_rent": 25000,
+            "status": "Vacant",
+            "images": [first_path, second_path],
+            "image_url": first_path,
+        }
+        with (
+            patch.object(ramp_app.supabase_backend, "settings", return_value=config),
+            patch.object(
+                ramp_app.supabase_backend, "load_session", return_value=(auth, "live-csrf")
+            ),
+            patch.object(
+                ramp_app.supabase_backend,
+                "api_request",
+                side_effect=[[unit], [{"id": record_id}]],
+            ) as request_api,
+            patch.object(
+                ramp_app.supabase_backend, "delete_unit_media"
+            ) as delete_photo,
+        ):
+            response = self.client.post(
+                f"/properties/{record_id}/edit",
+                data={
+                    "csrf_token": "live-csrf",
+                    "unit_number": "B-14",
+                    "name": "Harbor Homes",
+                    "location": "Pasay",
+                    "landlord_id": "",
+                    "monthly_rent": "25000",
+                    "status": "Vacant",
+                    "cover_image": second_path,
+                },
+            )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(request_api.call_args.kwargs["body"]["images"], [first_path, second_path])
+        self.assertEqual(request_api.call_args.kwargs["body"]["image_url"], second_path)
+        delete_photo.assert_not_called()
+
+    def test_unit_photo_upload_rejects_unrecognized_content(self):
+        config, auth = self.set_live_session()
+        with (
+            patch.object(ramp_app.supabase_backend, "settings", return_value=config),
+            patch.object(
+                ramp_app.supabase_backend, "load_session", return_value=(auth, "live-csrf")
+            ),
+            patch.object(
+                ramp_app.supabase_backend, "upload_unit_media"
+            ) as upload_photo,
+            patch.object(ramp_app.supabase_backend, "api_request") as request_api,
+        ):
+            response = self.client.post(
+                "/properties/new",
+                data={
+                    "csrf_token": "live-csrf",
+                    "record_id": str(uuid4()),
+                    "unit_number": "B-14",
+                    "name": "Harbor Homes",
+                    "location": "Pasay",
+                    "landlord_id": "",
+                    "status": "Vacant",
+                    "unit_images": (io.BytesIO(b"<svg onload=alert(1)>"), "unit.svg"),
+                },
+                headers={"X-Ramp-Form-Request": "1"},
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"Use a JPEG, PNG, or WebP image", response.data)
+        upload_photo.assert_not_called()
+        request_api.assert_not_called()
+
+    def test_unit_photo_upload_enforces_file_size_and_count_limits(self):
+        config, auth = self.set_live_session()
+        with (
+            patch.object(ramp_app.supabase_backend, "settings", return_value=config),
+            patch.object(
+                ramp_app.supabase_backend, "load_session", return_value=(auth, "live-csrf")
+            ),
+            patch.object(
+                ramp_app.supabase_backend, "upload_unit_media"
+            ) as upload_photo,
+            patch.object(ramp_app.supabase_backend, "api_request") as request_api,
+        ):
+            oversized = self.client.post(
+                "/properties/new",
+                data={
+                    "csrf_token": "live-csrf",
+                    "record_id": str(uuid4()),
+                    "unit_number": "B-14",
+                    "name": "Harbor Homes",
+                    "location": "Pasay",
+                    "landlord_id": "",
+                    "status": "Vacant",
+                    "unit_images": (
+                        io.BytesIO(b"\xff\xd8\xff" + b"x" * ramp_app.UNIT_PHOTO_MAX_FILE_BYTES),
+                        "large.jpg",
+                    ),
+                },
+                headers={"X-Ramp-Form-Request": "1"},
+            )
+            too_many = self.client.post(
+                "/properties/new",
+                data={
+                    "csrf_token": "live-csrf",
+                    "record_id": str(uuid4()),
+                    "unit_number": "B-14",
+                    "name": "Harbor Homes",
+                    "location": "Pasay",
+                    "landlord_id": "",
+                    "status": "Vacant",
+                    "unit_images": [
+                        (io.BytesIO(b"\xff\xd8\xffphoto"), f"photo-{index}.jpg")
+                        for index in range(ramp_app.UNIT_PHOTO_MAX_FILES + 1)
+                    ],
+                },
+                headers={"X-Ramp-Form-Request": "1"},
+            )
+        self.assertEqual(oversized.status_code, 400)
+        self.assertIn(b"5 MB or smaller", oversized.data)
+        self.assertEqual(too_many.status_code, 400)
+        self.assertIn(b"no more than 5", too_many.data)
+        upload_photo.assert_not_called()
+        request_api.assert_not_called()
 
     def test_payment_receipt_route_rejects_unrelated_or_public_urls(self):
         config, auth = self.set_live_session()
@@ -2233,7 +2470,7 @@ class RampAdminWebTests(unittest.TestCase):
         patch_call = request_api.call_args
         self.assertEqual(patch_call.args[2], "landlords")
         self.assertEqual(patch_call.kwargs["method"], "PATCH")
-        self.assertEqual(patch_call.kwargs["body"]["name"], "DEMO LANDLORD UPDATED")
+        self.assertEqual(patch_call.kwargs["body"]["name"], "Demo Landlord Updated")
         self.assertEqual(patch_call.kwargs["body"]["phone"], "09171234567")
 
     def test_live_landlord_edit_accepts_numeric_record_id(self):
@@ -2363,7 +2600,7 @@ class RampAdminWebTests(unittest.TestCase):
             "invite-admin-account",
             {
                 "email": "jordan@example.com",
-                "display_name": "JORDAN LEE",
+                "display_name": "Jordan Lee",
                 "role": "super_admin",
             },
         )

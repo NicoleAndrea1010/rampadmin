@@ -50,11 +50,20 @@ the Active badge is derived from the latest effective history entry on or
 before the server's current date and is not cross-checked against billing
 settings.
 
-Payment proof, tenant document, and photo links are not exposed because this
-web project has no verified private Storage URL flow. RFID card identifiers are
-not selected or displayed. Door controls remain disabled until the deployed
-function contract and superadmin authorization can be verified. No Supabase
-schema changes are made by this web app.
+Unit photos use the existing `units.images` and `units.image_url` fields and the
+public `ramp_media` Storage bucket. Unit photos can be added or removed on the
+unit edit page; uploads require a live connection and accept JPEG, PNG, or WebP
+up to 5 MB each (20 MB total). Because this bucket is public, its images are
+publicly viewable. The supplied Storage policies currently allow broad
+authenticated writes and have no bucket-level type or size restrictions; review
+and narrow those policies in Supabase before relying on them for production
+access control. This app does not change those policies.
+
+Payment proof and tenant document links are not exposed because this web
+project has no verified private Storage URL flow. RFID card identifiers are
+not selected or displayed. Per-unit lock configuration and door controls are
+not exposed in this web app; read-only RFID access history remains available.
+No Supabase schema or policy changes are made by this web app.
 
 Tenant payment receipts use the private `tenant-payment-receipts` Storage bucket.
 The admin app requests a five-minute signed URL only after fetching the payment
@@ -98,16 +107,13 @@ Audit, utility-rate, and RFID access histories are grouped under System
 navigation. List pages retain their data and routes while placing secondary row
 actions in an accessible menu. Displayed timestamps omit timezone abbreviations.
 
-## Door status and control
+## RFID access history
 
-The unit page is monitoring-only and does not send unlock/close requests or read
-`public.door_commands` directly. A verified request/status contract for the
-existing `door-device-command` and `rfid-access-event` functions is not present
-in this web project, so the app does not call them or infer physical door state.
-Do not apply or rely on the older custom door RPC migration from this app. Door
-controls can be enabled only after confirming the deployed function contract and
-its superadmin authorization behavior; no Supabase schema changes are made by
-this web app.
+RFID access history remains read-only under System navigation. The web app does
+not configure per-unit locks or send door commands because it has no verified
+device-assignment schema or deployed lock-function contract. The historical
+`20261112210000_superadmin_door_unlock.sql` migration is not applied or used by
+this app.
 
 Browser offline storage is device-local web storage (Cache Storage and IndexedDB), not SQLite. It is not encrypted by this app, so use only trusted, access-controlled devices and HTTPS. Offline pages are available only after the device has loaded them online; offline login is not supported. Use normal online sign-in to establish the admin session before disconnecting.
 

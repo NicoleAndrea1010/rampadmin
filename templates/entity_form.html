@@ -6,7 +6,7 @@
   <div><h1>{{ 'Edit ' if record else 'Add ' }}{{ title }}</h1></div>
 </div>
 <section class="panel form-panel">
-  <form method="post" class="landlord-form" data-loading-label="Saving…" data-confirm="{{ 'Save changes to this record?' if record else '' }}" {% if record and section in ['properties', 'tenants'] %}data-offline-queue="true"{% else %}data-requires-online="true"{% endif %}>
+  <form method="post" class="landlord-form" {% if section == 'properties' %}enctype="multipart/form-data"{% endif %} data-loading-label="Saving…" data-confirm="{{ 'Save changes to this record?' if record else '' }}" {% if record and section in ['properties', 'tenants'] %}data-offline-queue="true"{% else %}data-requires-online="true"{% endif %}>
     {% if form_error %}<p class="form-error" role="alert">{{ form_error }}</p>{% endif %}
     <div class="form-section-heading"><span class="form-section-icon"><svg class="icon" aria-hidden="true"><use href="{{ url_for('static', filename='icons.svg') }}#icon-pencil"></use></svg></span><span><strong>Record details</strong></span></div>
     <div class="form-grid">
@@ -53,6 +53,36 @@
       </label>
       {% endfor %}
     </div>
+    {% if section == 'properties' %}
+    <section class="unit-photo-editor" aria-labelledby="unit-photo-heading">
+      <div>
+        <h2 id="unit-photo-heading">Unit photos</h2>
+        <p>Choose up to 5 JPEG, PNG, or WebP images per upload. Each image can be up to 5 MB (20 MB total).</p>
+      </div>
+      {% if can_manage_unit_photos %}
+        {% if unit_photos %}
+        <div class="unit-photo-grid">
+          {% for photo in unit_photos %}
+          <label class="unit-photo-card">
+            <img src="{{ photo.url }}" alt="Unit photo {{ loop.index }}" loading="lazy">
+            <span><input type="radio" name="cover_image" value="{{ photo.path }}" {% if photo.path == record.image_url or (not record.image_url and loop.first) %}checked{% endif %}> Cover photo</span>
+            <span><input type="checkbox" name="remove_images" value="{{ photo.path }}"> Remove photo</span>
+          </label>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="unit-photo-empty">No photos added yet.</p>
+        {% endif %}
+        <label class="form-field unit-photo-upload">
+          <span>Add photos</span>
+          <input type="file" name="unit_images" accept="image/jpeg,image/png,image/webp" multiple>
+          <small class="form-help">Uploads require an active connection. Saved photos are publicly viewable in the configured Supabase bucket.</small>
+        </label>
+      {% else %}
+        <p class="unit-photo-empty">Connect to Supabase to manage unit photos.</p>
+      {% endif %}
+    </section>
+    {% endif %}
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {% if not record %}<input type="hidden" name="record_id" value="{{ new_record_id }}">{% endif %}
     {% if record and record.get('updated_at') %}<input type="hidden" name="updated_at" value="{{ record.updated_at }}">{% endif %}

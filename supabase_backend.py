@@ -5,6 +5,7 @@ import binascii
 import json
 import logging
 import os
+import re
 import secrets
 import sqlite3
 import time
@@ -147,6 +148,8 @@ def _request(
     body: Any = None,
     query: dict[str, str] | None = None,
     prefer: str | None = None,
+    content_type: str | None = None,
+    extra_headers: dict[str, str] | None = None,
 ) -> Any:
     query_string = f"?{urlencode(query)}" if query else ""
     url = f"{config.url}{path}{query_string}"
@@ -155,10 +158,16 @@ def _request(
         "Authorization": f"Bearer {token or config.publishable_key}",
         "Accept": "application/json",
     }
+    if extra_headers:
+        headers.update(extra_headers)
     data = None
     if body is not None:
-        headers["Content-Type"] = "application/json"
-        data = json.dumps(body).encode("utf-8")
+        if isinstance(body, bytes):
+            headers["Content-Type"] = content_type or "application/octet-stream"
+            data = body
+        else:
+            headers["Content-Type"] = "application/json"
+            data = json.dumps(body).encode("utf-8")
     if prefer:
         headers["Prefer"] = prefer
     request = Request(url, data=data, headers=headers, method=method)
@@ -399,6 +408,70 @@ def create_signed_storage_url(
     if not signed_url.startswith("/storage/v1/object/sign/"):
         raise SupabaseRequestError(502, "invalid_response")
     return f"{config.url}{signed_url}"
+
+
+def validate_unit_media_path(object_path: str) -> str:
+    if (
+        not isinstance(object_path, str)
+        or len(object_path) > 1024
+        or "\\" in object_path
+    ):
+        raise ValueError("Invalid unit media object path.")
+    parts = object_path.split("/")
+    if (
+        len(parts) < 3
+        or parts[0] != "units"
+        or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", parts[1]) is None
+        or any(
+            not part
+            or part in {".", ".."}
+            or re.fullmatch(r"[A-Za-z0-9_.-]{1,255}", part) is None
+            for part in parts[2:]
+        )
+        or re.search(r"\.(?:jpe?g|png|webp)$", parts[-1], re.IGNORECASE) is None
+    ):
+        raise ValueError("Invalid unit media object path.")
+    return object_path
+
+
+def upload_unit_media(
+    config: SupabaseSettings,
+    token: str,
+    object_path: str,
+    content: bytes,
+    content_type: str,
+) -> None:
+    if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+        raise ValueError("Unsupported unit image type.")
+    path = validate_unit_media_path(object_path)
+    _request(
+        config,
+        f"/storage/v1/object/ramp_media/{quote(path, safe='/')}",
+        method="POST",
+        token=token,
+        body=content,
+        content_type=content_type,
+        extra_headers={"x-upsert": "false"},
+    )
+
+
+def delete_unit_media(config: SupabaseSettings, token: str, object_path: str) -> None:
+    path = validate_unit_media_path(object_path)
+    _request(
+        config,
+        "/storage/v1/object/ramp_media",
+        method="DELETE",
+        token=token,
+        body={"prefixes": [path]},
+    )
+
+
+def public_unit_media_url(config: SupabaseSettings, object_path: str) -> str:
+    path = validate_unit_media_path(object_path)
+    return (
+        f"{config.url}/storage/v1/object/public/ramp_media/"
+        f"{quote(path, safe='/')}"
+    )
 
 
 def invoke_function(
