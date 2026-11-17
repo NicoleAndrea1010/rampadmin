@@ -1811,7 +1811,64 @@ class RampAdminWebTests(unittest.TestCase):
                 config, "admin-access-token", "other-folder/private.webp"
             )
 
-    def test_live_property_create_uploads_unit_photo_and_stores_its_path(self):
+    def test_unit_media_public_urls_normalize_to_safe_object_paths(self):
+        config = ramp_app.supabase_backend.SupabaseSettings(
+            "https://example.supabase.co", "test-publishable-key"
+        )
+        unit_id = str(uuid4())
+        path = f"units/{unit_id}/room photo (1).jpg"
+        public_url = (
+            f"{config.url}/storage/v1/object/public/ramp_media/"
+            f"units/{unit_id}/room%20photo%20%281%29.jpg"
+        )
+
+        self.assertEqual(
+            ramp_app.supabase_backend.unit_media_object_path(config, public_url),
+            path,
+        )
+        self.assertEqual(
+            ramp_app.supabase_backend.unit_media_object_path(config, path),
+            path,
+        )
+        with self.assertRaises(ValueError):
+            ramp_app.supabase_backend.unit_media_object_path(
+                config, public_url.replace("example.supabase.co", "other.example.com")
+            )
+        with self.assertRaises(ValueError):
+            ramp_app.supabase_backend.unit_media_object_path(
+                config, public_url.replace("ramp_media", "private_bucket")
+            )
+
+    def test_unit_detail_renders_existing_public_storage_photo_urls(self):
+        config, auth = self.set_live_session()
+        unit_id = str(uuid4())
+        photo_url = (
+            f"{config.url}/storage/v1/object/public/ramp_media/"
+            f"units/{unit_id}/existing%20photo.jpg"
+        )
+        unit = {
+            "id": unit_id,
+            "unit_number": "A-12",
+            "name": "Harbor House",
+            "images": [photo_url],
+            "image_url": photo_url,
+            "is_archived": False,
+        }
+        with (
+            patch.object(ramp_app.supabase_backend, "settings", return_value=config),
+            patch.object(
+                ramp_app.supabase_backend, "load_session", return_value=(auth, "live-csrf")
+            ),
+            patch.object(ramp_app, "_fetch_supabase_record", return_value=unit),
+            patch.object(ramp_app, "_fetch_supabase_related", return_value=[]),
+        ):
+            response = self.client.get(f"/properties/{unit_id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(photo_url.encode(), response.data)
+        self.assertIn(b"Unit photos", response.data)
+
+    def test_live_property_create_uploads_unit_photo_and_stores_its_public_url(self):
         config, auth = self.set_live_session()
         record_id = str(uuid4())
         with (
@@ -1845,13 +1902,15 @@ class RampAdminWebTests(unittest.TestCase):
         self.assertEqual(upload_photo.call_args.args[1], "admin-access-token")
         object_path = upload_photo.call_args.args[2]
         self.assertTrue(object_path.startswith(f"units/{record_id}/"))
-        self.assertEqual(request_api.call_args.kwargs["body"]["images"], [object_path])
-        self.assertEqual(request_api.call_args.kwargs["body"]["image_url"], object_path)
+        public_url = ramp_app.supabase_backend.public_unit_media_url(config, object_path)
+        self.assertEqual(request_api.call_args.kwargs["body"]["images"], [public_url])
+        self.assertEqual(request_api.call_args.kwargs["body"]["image_url"], public_url)
 
     def test_unit_photo_removal_updates_unit_and_deletes_storage_object(self):
         config, auth = self.set_live_session()
         record_id = str(uuid4())
         object_path = f"units/{record_id}/existing.webp"
+        public_url = ramp_app.supabase_backend.public_unit_media_url(config, object_path)
         unit = {
             "id": record_id,
             "unit_number": "B-14",
@@ -1861,8 +1920,8 @@ class RampAdminWebTests(unittest.TestCase):
             "rent": 25000,
             "monthly_rent": 25000,
             "status": "Vacant",
-            "images": [object_path],
-            "image_url": object_path,
+            "images": [public_url],
+            "image_url": public_url,
         }
         with (
             patch.object(ramp_app.supabase_backend, "settings", return_value=config),
@@ -1901,6 +1960,8 @@ class RampAdminWebTests(unittest.TestCase):
         record_id = str(uuid4())
         first_path = f"units/{record_id}/first.webp"
         second_path = f"units/{record_id}/second.webp"
+        first_url = ramp_app.supabase_backend.public_unit_media_url(config, first_path)
+        second_url = ramp_app.supabase_backend.public_unit_media_url(config, second_path)
         unit = {
             "id": record_id,
             "unit_number": "B-14",
@@ -1910,8 +1971,8 @@ class RampAdminWebTests(unittest.TestCase):
             "rent": 25000,
             "monthly_rent": 25000,
             "status": "Vacant",
-            "images": [first_path, second_path],
-            "image_url": first_path,
+            "images": [first_url, second_url],
+            "image_url": first_url,
         }
         with (
             patch.object(ramp_app.supabase_backend, "settings", return_value=config),
@@ -1941,8 +2002,8 @@ class RampAdminWebTests(unittest.TestCase):
                 },
             )
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(request_api.call_args.kwargs["body"]["images"], [first_path, second_path])
-        self.assertEqual(request_api.call_args.kwargs["body"]["image_url"], second_path)
+        self.assertEqual(request_api.call_args.kwargs["body"]["images"], [first_url, second_url])
+        self.assertEqual(request_api.call_args.kwargs["body"]["image_url"], second_url)
         delete_photo.assert_not_called()
 
     def test_unit_photo_upload_rejects_unrecognized_content(self):

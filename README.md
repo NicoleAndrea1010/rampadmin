@@ -51,10 +51,11 @@ before the server's current date and is not cross-checked against billing
 settings.
 
 Unit photos use the existing `units.images` and `units.image_url` fields and the
-public `ramp_media` Storage bucket. Unit photos can be added or removed on the
-unit edit page; uploads require a live connection and accept JPEG, PNG, or WebP
-up to 5 MB each (20 MB total). Because this bucket is public, its images are
-publicly viewable. The supplied Storage policies currently allow broad
+public `ramp_media` Storage bucket. The app stores public Storage URLs in both
+fields and also reads legacy object paths. Unit photos can be added or removed
+on the unit edit page; uploads require a live connection and accept JPEG, PNG,
+or WebP up to 5 MB each (20 MB total). Because this bucket is public, its images
+are publicly viewable. The supplied Storage policies currently allow broad
 authenticated writes and have no bucket-level type or size restrictions; review
 and narrow those policies in Supabase before relying on them for production
 access control. This app does not change those policies.

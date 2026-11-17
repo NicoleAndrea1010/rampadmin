@@ -65,7 +65,7 @@
           {% for photo in unit_photos %}
           <label class="unit-photo-card">
             <img src="{{ photo.url }}" alt="Unit photo {{ loop.index }}" loading="lazy">
-            <span><input type="radio" name="cover_image" value="{{ photo.path }}" {% if photo.path == record.image_url or (not record.image_url and loop.first) %}checked{% endif %}> Cover photo</span>
+            <span><input type="radio" name="cover_image" value="{{ photo.path }}" {% if photo.is_cover or (not record.image_url and loop.first) %}checked{% endif %}> Cover photo</span>
             <span><input type="checkbox" name="remove_images" value="{{ photo.path }}"> Remove photo</span>
           </label>
           {% endfor %}

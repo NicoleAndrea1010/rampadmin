@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode, urlparse
+from urllib.parse import quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -425,13 +425,42 @@ def validate_unit_media_path(object_path: str) -> str:
         or any(
             not part
             or part in {".", ".."}
-            or re.fullmatch(r"[A-Za-z0-9_.-]{1,255}", part) is None
+            or len(part) > 255
+            or "\\" in part
+            or re.search(r"[\x00-\x1f\x7f]", part)
             for part in parts[2:]
         )
         or re.search(r"\.(?:jpe?g|png|webp)$", parts[-1], re.IGNORECASE) is None
     ):
         raise ValueError("Invalid unit media object path.")
     return object_path
+
+
+def unit_media_object_path(config: SupabaseSettings, reference: str) -> str:
+    if not isinstance(reference, str) or not reference or len(reference) > 4096:
+        raise ValueError("Invalid unit media reference.")
+    parsed = urlparse(reference)
+    if parsed.scheme or parsed.netloc:
+        configured = urlparse(config.url)
+        if (
+            parsed.scheme.casefold() != configured.scheme.casefold()
+            or parsed.netloc.casefold() != configured.netloc.casefold()
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("Invalid public unit media URL.")
+        prefix = "/storage/v1/object/public/ramp_media/"
+        if not parsed.path.startswith(prefix):
+            raise ValueError("Invalid public unit media URL.")
+        try:
+            object_path = unquote(parsed.path[len(prefix):], errors="strict")
+        except UnicodeDecodeError as error:
+            raise ValueError("Invalid public unit media URL.") from error
+    else:
+        if parsed.query or parsed.fragment:
+            raise ValueError("Invalid unit media object path.")
+        object_path = reference
+    return validate_unit_media_path(object_path)
 
 
 def upload_unit_media(

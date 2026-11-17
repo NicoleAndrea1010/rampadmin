@@ -3066,6 +3066,20 @@ def _find_entity(section: str, record_id: str) -> dict[str, Any] | None:
     return dict(result[0]) if result else None
 
 
+def _unit_photo_object_path(record: dict[str, Any], reference: str) -> str:
+    config = getattr(g, "supabase_config", None)
+    try:
+        if config is None:
+            raise ValueError("Supabase is not configured.")
+        path = supabase_backend.unit_media_object_path(config, reference)
+    except ValueError:
+        abort(409, description="This unit has an unsupported photo path. Contact support.")
+    unit_id = str(record.get("id") or "")
+    if path.split("/")[1] != unit_id:
+        abort(409, description="This unit has a photo assigned to a different unit. Contact support.")
+    return path
+
+
 def _unit_photo_paths(record: dict[str, Any]) -> list[str]:
     raw_images = record.get("images")
     if raw_images is not None and not isinstance(raw_images, list):
@@ -3074,30 +3088,39 @@ def _unit_photo_paths(record: dict[str, Any]) -> list[str]:
     if record.get("image_url"):
         candidates.append(record["image_url"])
     paths: list[str] = []
-    prefix = "units/"
     for candidate in candidates:
-        if not isinstance(candidate, str) or not candidate.startswith(prefix):
+        if not isinstance(candidate, str):
             abort(409, description="This unit has an unsupported photo path. Contact support.")
-        try:
-            path = supabase_backend.validate_unit_media_path(candidate)
-        except ValueError:
-            abort(409, description="This unit has an unsupported photo path. Contact support.")
+        path = _unit_photo_object_path(record, candidate)
         if path not in paths:
             paths.append(path)
     return paths
 
 
-def _unit_photo_items(record: dict[str, Any]) -> list[dict[str, str]]:
+def _unit_photo_items(record: dict[str, Any]) -> list[dict[str, Any]]:
     config = getattr(g, "supabase_config", None)
     if config is None:
         return []
+    cover_path = (
+        _unit_photo_object_path(record, record["image_url"])
+        if record.get("image_url")
+        else None
+    )
     return [
         {
             "path": path,
             "url": supabase_backend.public_unit_media_url(config, path),
+            "is_cover": path == cover_path,
         }
         for path in _unit_photo_paths(record)
     ]
+
+
+def _unit_photo_reference(object_path: str) -> str:
+    config = getattr(g, "supabase_config", None)
+    if config is None:
+        return object_path
+    return supabase_backend.public_unit_media_url(config, object_path)
 
 
 def _read_unit_photo_uploads() -> list[tuple[bytes, str, str]]:
@@ -3371,16 +3394,21 @@ def entity_form(section: str, record_id: str | None = None):
                 abort(400, description="Choose photos that belong to this unit.")
             if requested_cover and requested_cover not in existing_photo_paths:
                 abort(400, description="Choose a cover photo that belongs to this unit.")
+            current_cover_path = (
+                _unit_photo_object_path(record, record["image_url"])
+                if record and record.get("image_url")
+                else None
+            )
             removed_photo_paths = list(dict.fromkeys(requested_removals))
             remaining_photo_paths = [
                 path for path in existing_photo_paths if path not in removed_photo_paths
             ]
             cover_changed = bool(
                 requested_cover
-                and requested_cover != (record or {}).get("image_url")
+                and requested_cover != current_cover_path
             )
             if record is None or photo_uploads or removed_photo_paths or cover_changed:
-                values["images"] = remaining_photo_paths
+                photo_paths = list(remaining_photo_paths)
                 if photo_uploads:
                     for content, extension, content_type in photo_uploads:
                         object_path = f"units/{record_id}/{uuid4().hex}.{extension}"
@@ -3396,13 +3424,19 @@ def entity_form(section: str, record_id: str | None = None):
                         except supabase_backend.SupabaseRequestError:
                             _cleanup_uploaded_unit_photos(uploaded_photo_paths)
                             raise
-                    values["images"].extend(uploaded_photo_paths)
-                if requested_cover in values["images"]:
-                    values["image_url"] = requested_cover
-                elif (record or {}).get("image_url") in values["images"]:
-                    values["image_url"] = record["image_url"]
+                    photo_paths.extend(uploaded_photo_paths)
+                values["images"] = [
+                    _unit_photo_reference(path) for path in photo_paths
+                ]
+                if requested_cover in photo_paths:
+                    cover_path = requested_cover
+                elif current_cover_path in photo_paths:
+                    cover_path = current_cover_path
                 else:
-                    values["image_url"] = values["images"][0] if values["images"] else None
+                    cover_path = photo_paths[0] if photo_paths else None
+                values["image_url"] = (
+                    _unit_photo_reference(cover_path) if cover_path else None
+                )
     except HTTPException as error:
         _cleanup_uploaded_unit_photos(uploaded_photo_paths)
         if request.headers.get("X-Ramp-Form-Request") == "1":
